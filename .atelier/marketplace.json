@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "atelier-modules",
+  "name": "atelier-modules",
+  "label": "atelier-modules",
+  "description": "atelier-chrome + dock — a starter Atelier marketplace.",
+  "apps": []
+}
