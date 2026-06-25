@@ -37,5 +37,7 @@
       },
       "vendoredAt": "2026-06-25T05:23:58.123Z"
     }
-  ]
+  ],
+  "icon": "blocks",
+  "accent": "#7c3aed"
 }
