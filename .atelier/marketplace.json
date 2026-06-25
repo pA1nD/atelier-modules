@@ -4,5 +4,22 @@
   "name": "atelier-modules",
   "label": "atelier-modules",
   "description": "atelier-chrome + dock — a starter Atelier marketplace.",
-  "apps": []
+  "apps": [
+    {
+      "id": "atelier-chrome",
+      "version": "1.0.0",
+      "requires": [],
+      "name": "atelier-chrome",
+      "icon": null,
+      "tagline": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
+      "category": "Other",
+      "description": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
+      "screenshots": [],
+      "source": {
+        "tag": "v1.0.0",
+        "commit": "77ebf8903c806ec889778e51f1ffd1173fe6bfeb"
+      },
+      "vendoredAt": "2026-06-25T05:23:57.830Z"
+    }
+  ]
 }
