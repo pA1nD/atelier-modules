@@ -39,5 +39,7 @@
     }
   ],
   "icon": "blocks",
-  "accent": "#7c3aed"
+  "accent": "#7c3aed",
+  "publisher": "pa1nd",
+  "homepage": "https://github.com/pa1nd/atelier-modules"
 }
