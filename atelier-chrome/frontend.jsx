@@ -243,7 +243,7 @@ function ThemeMenu() {
  * dropdown with the appearance menu (and Sign out, when the auth module set
  * `user.logout`).
  * ========================================================================= */
-function UserPanel({ user, displayName, onOpenSettings, menuItems, onSelectMenu }) {
+function UserPanel({ user, displayName, onOpenSettings, menuItems, onSelectMenu, configureItems }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useClickAway(ref, () => setOpen(false), open);
@@ -299,8 +299,19 @@ function UserPanel({ user, displayName, onOpenSettings, menuItems, onSelectMenu 
             className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-950/5 dark:text-zinc-200 dark:hover:bg-white/5 cursor-pointer transition-colors"
           >
             <Icon name="settings" size={16} className="text-zinc-400" />
-            <span>Settings…</span>
+            <span>User settings</span>
           </button>
+          {configureItems?.map((c) => (
+            <button
+              key={c.qid}
+              type="button"
+              onClick={() => { setOpen(false); window.location.assign(`/${c.qid}/${c.sub}`); }}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-950/5 dark:text-zinc-200 dark:hover:bg-white/5 cursor-pointer transition-colors"
+            >
+              <Icon name="sliders-horizontal" size={16} className="text-zinc-400" />
+              <span>Configure {c.name}</span>
+            </button>
+          ))}
           {user?.logout && (
             <>
               <div className="my-1 border-t border-zinc-950/5 dark:border-white/10" />
@@ -450,6 +461,7 @@ function SidebarContent({
   addModuleActive,
   menuItems,
   onSelectMenu,
+  configureItems,
 }) {
   return (
     <div className="flex h-full w-[var(--rail-w)] flex-col gap-1 px-3 py-4">
@@ -544,7 +556,7 @@ function SidebarContent({
 
       {/* Footer — user panel (avatar → settings + sign out) */}
       <div className="mt-2 border-t border-zinc-950/5 pt-2 dark:border-white/10">
-        <UserPanel user={user} displayName={displayName} onOpenSettings={onOpenSettings} menuItems={menuItems} onSelectMenu={onSelectMenu} />
+        <UserPanel user={user} displayName={displayName} onOpenSettings={onOpenSettings} menuItems={menuItems} onSelectMenu={onSelectMenu} configureItems={configureItems} />
       </div>
     </div>
   );
@@ -774,12 +786,12 @@ function SettingsModal({ open, onClose, user, displayName, setDisplayName, wsTog
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Settings"
+        aria-label="User settings"
         onMouseDown={(e) => e.stopPropagation()}
         className="relative w-full max-w-md overflow-hidden rounded-2xl border border-zinc-950/10 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-900"
       >
         <div className="flex items-center justify-between border-b border-zinc-950/5 px-5 py-3.5 dark:border-white/10">
-          <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Settings</h2>
+          <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">User settings</h2>
           <button type="button" onClick={onClose} aria-label="close settings" className="inline-flex size-7 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-950/5 hover:text-zinc-950 dark:hover:bg-white/10 dark:hover:text-white cursor-pointer transition-colors">
             <Icon name="x" size={16} />
           </button>
@@ -884,11 +896,14 @@ export function chrome({
   const hasDock = modules.some((m) => m.qid === DOCK_QID && m.hasFrontend);
 
   const byWs = new Map();
-  const menuItems = [];   // modules that opt into the user menu (meta.menu === 'user')
+  const menuItems = [];        // modules that opt into the user menu (meta.menu === 'user')
+  const configureItems = [];   // modules exposing a config page via meta.configure (a sub-route)
   for (const m of modules) {
-    if (hasDock && m.qid === DOCK_QID) continue;   // surfaced as "Add module" below, not in the rail
     const merged = { ...(m.meta || {}), ...(loadedModules[m.qid]?.meta || {}) };
-    if (merged.hidden || merged.isChrome) continue;
+    if (merged.isChrome) continue;
+    if (merged.configure) configureItems.push({ qid: m.qid, name: merged.name || m.id, sub: typeof merged.configure === 'string' ? merged.configure : 'config' });
+    if (hasDock && m.qid === DOCK_QID) continue;   // surfaced as "Add module" + (above) its configure link, not in the rail
+    if (merged.hidden) continue;
     const loaded = loadedModules[m.qid];
     if (loaded?.status === 'ok' && !loaded.hasDefault) continue;  // slot-only module
     const item = { id: m.id, qid: m.qid, name: merged.name || m.id, icon: merged.icon || 'square', group: merged.group || null };
@@ -976,6 +991,7 @@ export function chrome({
     onOpenSettings: () => setSettingsOpen(true),
     menuItems,
     onSelectMenu: (m) => { navigate(m.qid); setMobileOpen(false); },
+    configureItems,
   };
 
   return (

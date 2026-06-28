@@ -30,10 +30,10 @@ different chrome, set `defaultChrome` in the config.
   collapsing shows a transient "press ⌘B" hint) and a **mobile off-canvas drawer** (below lg,
   opened by a hamburger top bar, dismissed by the scrim / × / Esc / navigating). The nav lists a
   workspace's modules — all workspaces shown together as dividers, or one at a time via a picker
-  (see [Settings](#settings)). The **Add module** row (pinned at the bottom) opens the marketplace
+  (see [User settings](#user-settings)). The **Add module** row (pinned at the bottom) opens the marketplace
   module `global/dock` when one is mounted — which is then kept out of the rail itself — else the
   workspace home. The user panel (avatar → upward dropdown) holds any **user-menu modules**
-  (`meta.menu: 'user'`, below), a **Settings…** item, and a **Sign out** item when the auth module
+  (`meta.menu: 'user'`, below), a **User settings** item, and a **Sign out** item when the auth module
   set `user.logout`. Also: the connection banner, the module error boundary, empty/loading/error
   states, the stylesheet/font/favicon injection, and the Lucide icon pipeline.
 - `styles.css` — `@import 'tailwindcss'` + Inter + the `html.dark` custom variant + the
@@ -58,18 +58,22 @@ Beyond `meta.icon` (above) and `meta.name` (the rail / menu label), this chrome 
 optional `meta` fields to *place* a module:
 
 - **`meta.group`** — a rail heading the module is filed under (shown when "Show category names"
-  is enabled in Settings; modules with no group list flat).
+  is enabled in User settings; modules with no group list flat).
 - **`meta.menu: 'user'`** — surface the module in the **user dropdown** (the avatar menu at the
   bottom of the rail) instead of as a rail app. Use it for utilities / reference pages — a kit
   styleguide, an About, a Help — that shouldn't sit among the real apps.
 - **`meta.hidden`** — keep the module out of the rail entirely (e.g. a slot-only or background
   module).
+- **`meta.configure: '<sub-route>'`** — add a **Configure <name>** entry to the user dropdown that
+  opens the module's config page at `<qid>/<sub-route>` (label from `meta.name`). For an
+  instance-config / marketplace module — e.g. `meta.configure: 'config'` on a module named
+  *Atelier* gives a "Configure Atelier" link to its `config` view.
 
 These are *this chrome's* placement conventions; another chrome may read `meta` differently.
 
-## Settings
+## User settings
 
-The user panel's **Settings…** item opens a modal the chrome owns; every choice persists in
+The user panel's **User settings** item opens a modal the chrome owns; every choice persists in
 `localStorage`:
 
 - **Display name** (`atelier-chrome-name`) — what the user panel shows. Overridden by the auth
