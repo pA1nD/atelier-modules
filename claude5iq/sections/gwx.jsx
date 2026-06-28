@@ -1,7 +1,7 @@
 /* Chapter 04 — gwx · the whole Google Workspace, one safe multi-account command.
  * The suite it reaches → three features (accounts · requests · skills) → why a CLI + set it up. */
 
-import { Reveal, ChapterIntro, Step, ActionConsole, Card, Icon, cn } from '../lib.jsx'
+import { Reveal, ChapterIntro, Step, ActionConsole, Card, Icon, Modal, cn } from '../lib.jsx'
 
 const { useState, useEffect } = React
 // account dot colours — 8 that cycle, no red (red reads as "offline / error")
@@ -86,58 +86,58 @@ function FeatureCard({ n, title, lead, accent, children }) {
 }
 
 // the full catalogue of gwx skills — searchable, click one to read its SKILL.md
-function SkillsModal({ skills, count, self, onClose }) {
+function SkillsPanel({ skills, count, self, close }) {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(null)
   const [content, setContent] = useState(null)
   useEffect(() => {
-    const k = (e) => e.key === 'Escape' && (sel ? setSel(null) : onClose())
+    const k = (e) => e.key === 'Escape' && (sel ? setSel(null) : close())
     document.addEventListener('keydown', k)
-    const prev = document.body.style.overflow; document.body.style.overflow = 'hidden'
-    return () => { document.removeEventListener('keydown', k); document.body.style.overflow = prev }
+    return () => document.removeEventListener('keydown', k)
   }, [sel])
   const open = (id) => { setSel(id); setContent(null); fetch(self.api + '/gwx/skill/' + id).then((r) => r.json()).then((d) => setContent(d.content || '(could not load this skill)')).catch(() => setContent('(could not load this skill)')) }
   const ql = q.trim().toLowerCase()
   const filtered = ql ? skills.filter((s) => (s.id + ' ' + (s.desc || '')).toLowerCase().includes(ql)) : skills
   return (
-    <div className="cl-pop fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-zinc-950/55 backdrop-blur-sm" />
-      <div className="relative z-10 flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-950/10 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-3 border-b border-zinc-950/10 px-4 py-3 dark:border-white/10">
-          {sel ? (
-            <>
-              <button onClick={() => setSel(null)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-medium text-zinc-500 transition hover:bg-zinc-950/[0.05] hover:text-zinc-800 dark:hover:bg-white/10 dark:hover:text-zinc-100"><Icon name="chevron-left" size={14} /> all skills</button>
-              <span className="cl-mono truncate text-[13px] font-semibold text-zinc-950 dark:text-zinc-50">{sel}</span>
-            </>
-          ) : (
-            <>
-              <span className="shrink-0 text-[13px] font-semibold text-zinc-950 dark:text-zinc-50">{count} gwx skills</span>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="search…" className="cl-mono ml-1 min-w-0 flex-1 rounded-lg border border-zinc-950/10 bg-zinc-950/[0.02] px-2.5 py-1.5 text-[12px] text-zinc-700 outline-none focus:border-zinc-950/25 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-200" />
-            </>
-          )}
-          <button onClick={onClose} className="ml-auto shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-950/[0.06] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200"><Icon name="x" size={16} /></button>
-        </div>
-        <div className="overflow-auto">
-          {sel ? (
-            <div className="px-5 py-4">{content == null ? <div className="text-[12px] text-zinc-400">loading…</div> : <Markdown text={content} />}</div>
-          ) : (
-            <div className="p-2.5">
-              {filtered.length ? filtered.map((s) => (
-                <button key={s.id} onClick={() => open(s.id)} className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-zinc-950/[0.04] dark:hover:bg-white/[0.05]">
-                  <span className="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide" style={{ background: (KIND_COLOR[s.kind] || '#888') + '22', color: KIND_COLOR[s.kind] || '#888' }}>{KIND_LABEL[s.kind] || s.kind}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">{deriveName(s.id)}</div>
-                    {s.desc && <div className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">{s.desc}</div>}
-                  </div>
-                  <Icon name="chevron-right" size={15} className="mt-1 shrink-0 text-zinc-300 dark:text-zinc-600" />
-                </button>
-              )) : <div className="p-6 text-center text-[12px] text-zinc-400">no skills match “{q}”</div>}
-            </div>
-          )}
-        </div>
+    <>
+      <div className="flex shrink-0 items-center gap-3 border-b border-zinc-950/10 px-4 py-3 dark:border-white/10">
+        {sel ? (
+          <>
+            <button onClick={() => setSel(null)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-medium text-zinc-500 transition hover:bg-zinc-950/[0.05] hover:text-zinc-800 dark:hover:bg-white/10 dark:hover:text-zinc-100"><Icon name="chevron-left" size={14} /> all skills</button>
+            <span className="cl-mono truncate text-[13px] font-semibold text-zinc-950 dark:text-zinc-50">{sel}</span>
+          </>
+        ) : (
+          <>
+            <span className="shrink-0 text-[13px] font-semibold text-zinc-950 dark:text-zinc-50">{count} gwx skills</span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="search…" className="cl-mono ml-1 min-w-0 flex-1 rounded-lg border border-zinc-950/10 bg-zinc-950/[0.02] px-2.5 py-1.5 text-[12px] text-zinc-700 outline-none focus:border-zinc-950/25 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-200" />
+          </>
+        )}
+        <button onClick={close} className="ml-auto shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-950/[0.06] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200"><Icon name="x" size={16} /></button>
       </div>
-    </div>
+      <div className="flex-1 overflow-auto">
+        {sel ? (
+          <div className="px-5 py-4">{content == null ? <div className="text-[12px] text-zinc-400">loading…</div> : <Markdown text={content} />}</div>
+        ) : (
+          <div className="p-2.5">
+            {filtered.length ? filtered.map((s) => (
+              <button key={s.id} onClick={() => open(s.id)} className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-zinc-950/[0.04] dark:hover:bg-white/[0.05]">
+                <span className="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide" style={{ background: (KIND_COLOR[s.kind] || '#888') + '22', color: KIND_COLOR[s.kind] || '#888' }}>{KIND_LABEL[s.kind] || s.kind}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">{deriveName(s.id)}</div>
+                  {s.desc && <div className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">{s.desc}</div>}
+                </div>
+                <Icon name="chevron-right" size={15} className="mt-1 shrink-0 text-zinc-300 dark:text-zinc-600" />
+              </button>
+            )) : <div className="p-6 text-center text-[12px] text-zinc-400">no skills match “{q}”</div>}
+          </div>
+        )}
+      </div>
+    </>
   )
+}
+
+function SkillsModal({ skills, count, self, onClose }) {
+  return <Modal onClose={onClose} size="max-w-2xl" closeOnEsc={false}>{(close) => <SkillsPanel skills={skills} count={count} self={self} close={close} />}</Modal>
 }
 
 export default function Gwx({ self, snap, actions, accent, icon, n }) {

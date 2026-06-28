@@ -34,12 +34,15 @@ Pure Node builtins, no deps. **Instruments** read the machine; **hands** take ac
 - `GET /sessions` — running/recent sessions with cwd + last prompt.
 - `GET /gwx/whoami` — per-account auth (on demand; timeboxed).
 - `GET /claudemd/:which` · `GET /templates/:which` — file contents + the install templates.
-- `GET /images/:name` — bundled imagery (basename-guarded).
+- `GET /images/:name` — bundled imagery from `media/` (basename-guarded).
+- `GET /processes` — the live agent / harness-daemon / browser-tab stack for the Browser chapter.
+- `GET /gwx/skills` · `GET /gwx/skill/:id` — the gwx skill catalogue + one skill's SKILL.md.
 - `POST /action/:id` — streams every line over the shell WebSocket (`action-log` / `action-done`):
-  `launch-horse`, `smoke-harness`, `gwx-whoami`, `install-gwx`, `wire-statusline`, `install-global-claudemd`.
+  `gwx-whoami`, `install-gwx`, `install-statusbar`, `install-global-claudemd`, `install-browser-harness`, `install-horse-browser`.
 
-**Safety.** Outward / destructive actions (`install-gwx` network; `wire-statusline`
-and `install-global-claudemd` overwrite) refuse to run without `{ confirm: true }`,
+**Safety.** Outward / destructive actions (`install-gwx` / `install-browser-harness` /
+`install-horse-browser` network; `install-statusbar` and `install-global-claudemd` overwrite)
+refuse to run without `{ confirm: true }`,
 back up the target first, and merge rather than clobber `settings.json`. Child
 processes are tracked and killed on hot-reload and shutdown (`teardown`).
 
@@ -49,10 +52,10 @@ finalizer — so what this module shows matches the terminal and the tab grouper
 
 ## Imagery
 
-`data/images/` holds the assets the chapters render — the horse-browser celestial
-banner + Agent Monitor screenshot and the browser-harness banner (each tool's own
-media), the browser-harness setup screenshots, and `gwx-fanout.png` (generated for
-this module). All on-palette, all license-clean.
+`media/` holds the assets the chapters render — eight tall website screenshots
+(`grid-*.jpg`) that scroll in the Browser chapter's fake agent-browser, plus the
+horse-browser banner. It lives **outside `data/`** (which doesn't ship with a packaged
+module) so the imagery travels with the install. All on-palette, all license-clean.
 
 ## Design
 

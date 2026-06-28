@@ -219,7 +219,7 @@ function claudeMdInfo(file) {
 
 function instanceRoot(ctx) { return path.dirname(path.dirname(ctx.dataDir)) }   // <root>/claude/data → <root>
 function localClaudeMd(ctx) { return path.join(instanceRoot(ctx), 'CLAUDE.md') }
-function imagesDir(ctx) { return path.join(ctx.dataDir, 'images') }
+function imagesDir(ctx) { return path.join(path.dirname(ctx.dataDir), 'media') }
 
 function gwxInfo() {
   const bin = findOnPath('gwx'), gws = findOnPath('gws')
@@ -382,11 +382,8 @@ One paragraph: the goal, the shape, the one thing that matters most.
 /* ──────────────────────────── actions ────────────────────────────────────── */
 // A registry the frontend mirrors. `danger`: safe | network | destructive.
 const ACTIONS = {
-  'launch-horse':            { danger: 'safe',        label: 'Launch horse-browser' },
-  'smoke-harness':           { danger: 'safe',        label: 'Smoke-test browser-harness' },
   'gwx-whoami':              { danger: 'safe',        label: 'Check gwx auth' },
   'install-gwx':             { danger: 'network',     label: 'Install gwx' },
-  'wire-statusline':         { danger: 'destructive', label: 'Wire the statusline' },
   'install-statusbar':       { danger: 'destructive', label: 'Set up the status bar' },
   'install-global-claudemd': { danger: 'destructive', label: 'Install global CLAUDE.md' },
   'install-browser-harness': { danger: 'network',     label: 'Install browser-harness' },
@@ -533,7 +530,7 @@ export default {
 
     router.get('/actions', (req, res) => res.json({ actions: ACTIONS }))
 
-    // Serve bundled imagery (data/images is not served by the shell). basename()
+    // Serve bundled imagery from the module's media/ folder (data/ doesn't ship). basename()
     // strips any traversal; a missing file is a clean 404, never a thrown read.
     router.get('/images/:name', (req, res) => {
       const name = path.basename(req.params.name || '')
@@ -558,38 +555,10 @@ export default {
       if ((def.danger === 'network' || def.danger === 'destructive') && !confirmed) {
         const preflight = {}
         if (id === 'install-global-claudemd') { preflight.exists = fs.existsSync(GLOBAL_CLAUDE_MD); preflight.info = claudeMdInfo(GLOBAL_CLAUDE_MD) }
-        if (id === 'wire-statusline') preflight.current = statuslineInfo()
         return res.json({ needsConfirm: true, danger: def.danger, ...preflight })
       }
 
       switch (id) {
-        case 'launch-horse': {
-          const bin = findOnPath('horse-browser')
-          if (!bin) { emit(id, 'horse-browser not found on PATH', 'stderr'); return res.json({ ok: false, error: 'not installed' }) }
-          const r = await runStreaming(id, bin, [])
-          ctx.broadcast({ type: 'snapshot-dirty' })
-          return res.json(r)
-        }
-        case 'smoke-harness': {
-          const bin = findOnPath('browser-harness')
-          if (!bin) { emit(id, 'browser-harness not found on PATH', 'stderr'); done(id, { ok: false }); return res.json({ ok: false, error: 'not installed' }) }
-          // A focus-safe, tab-free smoke: prove the harness boots and can see the CDP endpoint.
-          const py = 'import os\nprint("harness ok · BU_CDP_URL=" + os.environ.get("BU_CDP_URL","(unset)"))\ntry:\n    import json,urllib.request\n    v=json.load(urllib.request.urlopen(os.environ.get("BU_CDP_URL","http://127.0.0.1:9223")+"/json/version",timeout=2))\n    print("connected ·", v.get("Browser"))\nexcept Exception as e:\n    print("CDP not reachable:", e)\n'
-          emit(id, `$ ${bin}  (BU_CDP_URL=${CDP})`, 'cmd')
-          let child
-          try { child = spawn(bin, [], { detached: true, env: { ...process.env, BU_CDP_URL: CDP } }) }
-          catch (e) { emit(id, `failed to spawn: ${e.message}`, 'stderr'); done(id, { ok: false }); return res.json({ ok: false, error: e.message }) }
-          slot.children.add(child)
-          let settled = false
-          const finish = (payload) => { if (settled) return; settled = true; slot.children.delete(child); done(id, payload); res.json(payload) }
-          const onData = (stream) => (b) => String(b).split('\n').forEach((l) => l.length && emit(id, l, stream))
-          child.stdout?.on('data', onData('stdout'))
-          child.stderr?.on('data', onData('stderr'))
-          child.on('error', (e) => { emit(id, e.message, 'stderr'); finish({ ok: false, error: e.message }) })
-          child.on('close', (code) => { emit(id, code === 0 ? '✓ harness reachable' : `✗ exit ${code}`, code === 0 ? 'ok' : 'stderr'); finish({ ok: code === 0, code, pid: child.pid }) })
-          try { child.stdin.write(py); child.stdin.end() } catch {}
-          return
-        }
         case 'install-browser-harness': {
           const uv = findOnPath('uv'), pipx = findOnPath('pipx')
           let r
@@ -627,28 +596,6 @@ export default {
           const r = await runStreaming(id, 'bash', ['-lc', 'curl -fsSL https://raw.githubusercontent.com/pA1nD/gwx/main/install.sh | bash'])
           ctx.broadcast({ type: 'snapshot-dirty' })
           return res.json(r)
-        }
-        case 'wire-statusline': {
-          // Portable: wire to a statusline shipped INSIDE this module, so it exists
-          // wherever the module is installed (not a developer's absolute path).
-          const which = body.which === 'horse' ? 'horse' : 'codename'
-          const target = path.join(path.dirname(ctx.dataDir), which === 'horse' ? 'statusline-ses.sh' : 'statusline.sh')
-          emit(id, `wiring statusLine → ${target.replace(HOME, '~')}`, 'cmd')
-          if (!fs.existsSync(target)) { emit(id, `statusline script not found: ${target}`, 'stderr'); done(id, { ok: false }); return res.json({ ok: false, error: 'script missing' }) }
-          // Distinguish absent from present-but-malformed: never clobber a settings.json we can't parse.
-          let s
-          if (fs.existsSync(SETTINGS)) {
-            s = readJsonSafe(SETTINGS)
-            if (s === null) { emit(id, 'settings.json is not valid JSON — refusing to overwrite (fix it by hand)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false, error: 'settings.json unparseable' }) }
-          } else s = {}
-          const b = backup(SETTINGS); if (b) emit(id, `backed up settings.json → ${path.basename(b)}`, 'stdout')
-          try { fs.chmodSync(target, 0o755) } catch {}
-          s.statusLine = { type: 'command', command: target }
-          fs.writeFileSync(SETTINGS, JSON.stringify(s, null, 2) + '\n')
-          emit(id, `✓ statusLine set (${which}) — open a new Claude Code session to see it`, 'ok')
-          done(id, { ok: true })
-          ctx.broadcast({ type: 'snapshot-dirty' })
-          return res.json({ ok: true, command: target })
         }
         case 'install-statusbar': {
           // dependency: jq (via Homebrew). Homebrew itself is a prerequisite we don't install.

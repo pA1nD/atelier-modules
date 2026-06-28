@@ -9,8 +9,6 @@
  * Per-file transform — no `import React`; JSX compiles to the global React.
  */
 
-import { Button, Badge, CopyButton, AgentSpark } from '@atelier/kit'
-
 const { useState, useEffect, useRef, useCallback } = React
 export const cn = (...p) => p.filter(Boolean).join(' ')
 
@@ -52,7 +50,6 @@ export function sessionCode(id) {
   const slot = CODES[hash32(id || '') % CODES.length]
   return { id, callsign: (id || '').slice(-4).toUpperCase(), emoji: slot.e, color: slot.c, hex: CODE_COLORS[slot.c], ink: CODE_INK[slot.c] }
 }
-export const hex32 = (n) => '0x' + (n >>> 0).toString(16).padStart(8, '0')
 // codename ink that stays legible in either mode (dark→lighter shade, light→darker shade)
 export const inkFor = (color, dark) => dark ? (CODE_INK_DARK[color] || CODE_COLORS[color]) : (CODE_INK[color] || CODE_COLORS[color])
 
@@ -203,26 +200,26 @@ export function Icon({ name, size = 16, strokeWidth = 1.85, className = '', styl
   return <span ref={ref} aria-hidden="true" className={cn('inline-flex shrink-0 items-center justify-center', className)} style={{ width: size, height: size, ...style }} />
 }
 
-// A true superellipse (squircle) clip — the dock app-icon silhouette.
-function squirclePath(size, n = 4.2) {
-  const a = size / 2, steps = 48; let d = ''
-  for (let i = 0; i <= steps; i++) {
-    const t = (2 * Math.PI * i) / steps, ct = Math.cos(t), st = Math.sin(t)
-    const x = a + a * Math.sign(ct) * Math.pow(Math.abs(ct), 2 / n)
-    const y = a + a * Math.sign(st) * Math.pow(Math.abs(st), 2 / n)
-    d += (i ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2)
-  }
-  return d + 'Z'
-}
-
-// The signature colored squircle tile with a white Lucide glyph (or emoji).
-export function Squircle({ icon, glyph, color = '#71717a', size = 56, className }) {
-  const clip = `path('${squirclePath(size)}')`
+// catalyst-style modal: a blurred light backdrop that fades in, and a panel that scales/slides
+// in *separately* (animating the whole overlay was what made the old one "flip"). The render-prop
+// hands children a `close` that plays the leave animation before the parent unmounts it.
+export function Modal({ onClose, size = 'max-w-2xl', closeOnEsc = true, children }) {
+  const [shown, setShown] = useState(false)
+  const closing = useRef(false)
+  const close = () => { if (closing.current) return; closing.current = true; setShown(false); setTimeout(onClose, 180) }
+  useEffect(() => {
+    const r = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)))
+    const prev = document.body.style.overflow; document.body.style.overflow = 'hidden'
+    const onKey = (e) => { if (e.key === 'Escape' && closeOnEsc) close() }
+    document.addEventListener('keydown', onKey)
+    return () => { cancelAnimationFrame(r); document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
+  }, [])
   return (
-    <div className={cn('relative grid shrink-0 place-items-center', className)}
-      style={{ width: size, height: size, clipPath: clip, WebkitClipPath: clip, filter: 'drop-shadow(0 2px 4px rgba(24,24,27,.18))', background: `linear-gradient(150deg, ${shade(color, 0.26)}, ${shade(color, -0.18)})` }}>
-      {icon ? <Icon name={icon} size={Math.round(size * 0.46)} strokeWidth={2.1} className="text-white" />
-        : <span className="leading-none text-white" style={{ fontSize: Math.round(size * 0.5) }}>{glyph}</span>}
+    <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto px-3 py-6 sm:items-center sm:px-6 sm:py-12">
+      <div onClick={close} className={cn('fixed inset-0 bg-white/40 backdrop-blur-lg backdrop-saturate-150 transition-opacity duration-200 ease-out dark:bg-zinc-950/55', shown ? 'opacity-100' : 'opacity-0')} />
+      <div className={cn('relative z-10 flex max-h-[86vh] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-zinc-950/10 transition duration-200 ease-out will-change-transform dark:bg-zinc-900 dark:ring-white/10', size, shown ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-4 scale-[0.97] opacity-0')}>
+        {typeof children === 'function' ? children(close) : children}
+      </div>
     </div>
   )
 }
@@ -334,50 +331,6 @@ export function ChapterClose({ color = '#3b82f6', gained, onNext, nextTitle, dar
   )
 }
 
-// collapsible "for the curious" — keeps technical commands out of the main flow
-export function Aside({ summary = 'Prefer to do it by hand?', children, dark }) {
-  const dk = dark || useDark()
-  return (
-    <details className={cn('cl-aside group mt-6 rounded-2xl border', dk ? 'border-white/10 bg-white/[0.03]' : 'border-zinc-950/10 bg-white')}>
-      <summary className={cn('flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-[13px] font-medium transition', dk ? 'text-white/60 hover:text-white' : 'text-zinc-500 hover:text-zinc-800')}>
-        <span className="inline-flex items-center gap-2"><Icon name="terminal" size={14} /> {summary}</span>
-        <Icon name="chevron-down" size={16} className="cl-chev" />
-      </summary>
-      <div className="space-y-2 px-4 pb-4">{children}</div>
-    </details>
-  )
-}
-
-// emoji + callsign in its AA-safe codename ink — one canonical agent badge.
-export function CodeBadge({ cc, size = 'sm', dim = false }) {
-  const dark = useDark()
-  const px = size === 'lg' ? 'text-base' : size === 'md' ? 'text-[13px]' : 'text-xs'
-  const ink = inkFor(cc.color, dark) || cc.hex
-  return (
-    <span className={cn('cl-mono inline-flex items-center gap-1.5 font-semibold tracking-wide', px)} title={cc.id || cc.callsign}>
-      <span className="leading-none" style={{ opacity: dim ? .5 : 1 }}>{cc.emoji}</span>
-      <span style={{ color: ink, opacity: dim ? .6 : 1 }}>{cc.callsign}</span>
-    </span>
-  )
-}
-
-export function StatusDot({ up, color }) {
-  const c = color || (up ? '#10b981' : '#a1a1aa')
-  return <span className="inline-block size-2 rounded-full" style={{ background: c }} />
-}
-
-// A copyable command line — the dock-flavoured "take action by hand" chip.
-export function CommandLine({ cmd, danger = 'safe', label }) {
-  const ring = danger === 'destructive' ? 'border-amber-500/40' : danger === 'network' ? 'border-blue-500/30' : 'border-zinc-950/10 dark:border-white/10'
-  return (
-    <div className={cn('group flex items-start gap-3 rounded-xl border bg-zinc-50 px-3.5 py-2.5 dark:bg-white/[0.04]', ring)}>
-      <span className="cl-mono mt-0.5 select-none text-zinc-300 dark:text-zinc-600">$</span>
-      <code className="cl-mono min-w-0 flex-1 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-zinc-700 dark:text-zinc-300">{cmd}</code>
-      <span className="mt-0.5 opacity-60 transition group-hover:opacity-100"><CopyButton value={cmd} title={label || 'Copy command'} /></span>
-    </div>
-  )
-}
-
 // A live streaming console — the dock code-window, dark, for action WS logs.
 export function ActionConsole({ entry, title = 'output' }) {
   const ref = useRef(null)
@@ -397,16 +350,3 @@ export function ActionConsole({ entry, title = 'output' }) {
     </div>
   )
 }
-
-// dock-style pill action button (Get / Installed look-alike)
-export function PillButton({ tone = 'blue', onClick, children, className }) {
-  const tones = {
-    blue: 'bg-zinc-950/[0.06] text-blue-600 hover:bg-zinc-950/10 dark:bg-white/[0.08] dark:text-blue-400 dark:hover:bg-white/15',
-    solid: 'bg-blue-600 text-white shadow-sm hover:bg-blue-500',
-    green: 'bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25 dark:text-emerald-400',
-    amber: 'bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:text-amber-300',
-  }
-  return <button onClick={onClick} className={cn('cursor-pointer rounded-full px-4 py-1.5 text-[13px] font-semibold transition-colors', tones[tone], className)}>{children}</button>
-}
-
-export { Button, Badge, CopyButton, AgentSpark }

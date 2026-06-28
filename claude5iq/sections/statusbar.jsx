@@ -38,7 +38,7 @@ function StatusTerminal({ accent }) {
         {/* the status line — its row is always reserved (so the terminal never shifts);
             only the content fades in (a while) and out (briefly) on a slow loop. */}
         <div className={cn('flex items-baseline gap-3 px-4 py-1 transition-opacity duration-700', !on && 'opacity-0')}>
-          <span className="shrink-0 text-cyan-400">~/pro/atelier</span>
+          <span className="shrink-0 text-cyan-400">~/code/my-app</span>
           <span className="shrink-0 text-zinc-300">Opus 4.8 (1M context)</span>
           <span className="shrink-0 text-zinc-400">ctx:38%</span>
           <span className="shrink-0">{CC.emoji} <span className="font-bold" style={{ color: CC.hex }}>{CC.callsign}</span></span>
@@ -73,7 +73,7 @@ export default function StatusBar({ snap, accent, icon, n, actions }) {
   const { byId, run } = actions || {}
   const entry = (byId && byId['install-statusbar']) || {}
   const pieces = [
-    { chip: <span className="text-cyan-600 dark:text-cyan-400">~/pro/atelier</span>, name: 'The folder', desc: 'where the agent boots up — and where it reads its instructions and identity from (the CLAUDE.md files there). It’s what makes this a specific agent, not a blank one.' },
+    { chip: <span className="text-cyan-600 dark:text-cyan-400">~/code/my-app</span>, name: 'The folder', desc: 'where the agent boots up — and where it reads its instructions and identity from (the CLAUDE.md files there). It’s what makes this a specific agent, not a blank one.' },
     { chip: <span className="cl-mono whitespace-nowrap text-zinc-700 dark:text-zinc-200">Opus 4.8 (1M context)</span>, name: 'The model', desc: 'the model actually running — here the latest, with its full 1-million-token context. Context ≈ how many words it can hold in short-term memory before it starts forgetting (or has to compact things down).' },
     { chip: <span className="text-zinc-700 dark:text-zinc-200">ctx:38%</span>, name: 'How full it is', desc: 'how much of that million is in use right now. The sweet spot is well worked-in — lots to draw on — but not bloated; past ~50% (≈500,000 words held at once) it gets unwieldy.' },
     { chip: <span>{CC.emoji} <span className="font-bold" style={{ color: inkFor(CC.color, dark) }}>{CC.callsign}</span></span>, name: 'Its identity', desc: 'the session’s name — the same emoji + four-letter code from Session Codes, so this terminal and your dashboard always point at the same agent.' },

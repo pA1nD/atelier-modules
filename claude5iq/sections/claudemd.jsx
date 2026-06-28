@@ -2,7 +2,7 @@
  * The story (left): Karpathy's observations → the multica-ai CLAUDE.md → 4 rules.
  * The status (right): the top-level sections of your ~/.claude/CLAUDE.md, ours lit. */
 
-import { Reveal, ChapterIntro, Step, Card, Icon, ActionConsole, cn } from '../lib.jsx'
+import { Reveal, ChapterIntro, Step, Card, Icon, ActionConsole, Modal, cn } from '../lib.jsx'
 
 const { useState, useEffect } = React
 
@@ -63,23 +63,18 @@ function Markdown({ text }) {
 }
 
 function SkillModal({ text, onClose }) {
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose()
-    document.addEventListener('keydown', onKey)
-    const prev = document.body.style.overflow; document.body.style.overflow = 'hidden'
-    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
-  }, [])
   return (
-    <div className="cl-pop fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-zinc-950/55 backdrop-blur-sm" />
-      <div className="relative z-10 flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-950/10 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-zinc-950/10 px-5 py-3.5 dark:border-white/10">
-          <div className="flex items-center gap-2"><Icon name="file-text" size={15} className="text-emerald-600" /><span className="cl-mono text-[13px] font-semibold text-zinc-950 dark:text-zinc-50">CLAUDE.md · the skill</span><a href={REPO_URL} target="_blank" rel="noreferrer" className="cl-mono text-[11px] text-zinc-400 underline-offset-2 hover:underline dark:text-zinc-500">{REPO}</a></div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-950/[0.06] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200"><Icon name="x" size={16} /></button>
-        </div>
-        <div className="overflow-auto px-6 py-5">{text == null ? <div className="text-[13px] text-zinc-400">loading…</div> : <Markdown text={text} />}</div>
-      </div>
-    </div>
+    <Modal onClose={onClose} size="max-w-2xl">
+      {(close) => (
+        <>
+          <div className="flex shrink-0 items-center justify-between border-b border-zinc-950/10 px-5 py-3.5 dark:border-white/10">
+            <div className="flex items-center gap-2"><Icon name="file-text" size={15} className="text-emerald-600" /><span className="cl-mono text-[13px] font-semibold text-zinc-950 dark:text-zinc-50">CLAUDE.md · the skill</span><a href={REPO_URL} target="_blank" rel="noreferrer" className="cl-mono text-[11px] text-zinc-400 underline-offset-2 hover:underline dark:text-zinc-500">{REPO}</a></div>
+            <button onClick={close} className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-950/[0.06] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200"><Icon name="x" size={16} /></button>
+          </div>
+          <div className="flex-1 overflow-auto px-6 py-5">{text == null ? <div className="text-[13px] text-zinc-400">loading…</div> : <Markdown text={text} />}</div>
+        </>
+      )}
+    </Modal>
   )
 }
 

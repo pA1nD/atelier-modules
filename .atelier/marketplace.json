@@ -6,25 +6,6 @@
   "description": "atelier-chrome + dock — a starter Atelier marketplace.",
   "apps": [
     {
-      "id": "claude5iq",
-      "version": "1.0.0",
-      "requires": [],
-      "name": "Claude 5IQ",
-      "icon": "sparkles",
-      "tagline": "",
-      "category": "Other",
-      "description": "",
-      "tags": [],
-      "homepage": null,
-      "author": null,
-      "screenshots": [],
-      "source": {
-        "tag": "v1.0.0",
-        "commit": "313f547a9bcfbfde3099c2041b7976ec339ae877"
-      },
-      "vendoredAt": "2026-06-28T19:10:30.883Z"
-    },
-    {
       "id": "dock",
       "version": "1.1.0",
       "requires": [
@@ -78,6 +59,29 @@
         "commit": "302b985cf60974e6d83a65e7e5b0c4ff3de23d2e"
       },
       "vendoredAt": "2026-06-28T19:25:42.299Z"
+    },
+    {
+      "id": "claude5iq",
+      "version": "1.0.0",
+      "requires": [
+        {
+          "note": "macOS or Linux — the live deck reads running processes via pgrep / ps / lsof, so the dashboard will not populate on Windows."
+        }
+      ],
+      "name": "Claude 5IQ",
+      "icon": "sparkles",
+      "tagline": "",
+      "category": "Other",
+      "description": "",
+      "tags": [],
+      "homepage": null,
+      "author": null,
+      "screenshots": [],
+      "source": {
+        "tag": "v1.0.0",
+        "commit": "4070f0609908457b20b774f15cde218bbc48b0e8"
+      },
+      "vendoredAt": "2026-06-28T19:51:11.859Z"
     }
   ],
   "icon": "blocks",
