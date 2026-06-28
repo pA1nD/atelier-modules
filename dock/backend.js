@@ -15,9 +15,12 @@ import { mdToHtml } from './markdown.js'
 import { baseName, wsSlug, addToWorkspace, removeFromConfig, renameWorkspace, workspacesInConfig, okShape } from './config-util.mjs'
 
 const SCAN_INTERVAL_MS = 20 * 60 * 1000
-// No bundled marketplaces — a fresh instance starts empty and the operator adds
-// real ones (owner/repo, a git URL, or a local path). See docs/quickstart.md.
-const DEFAULT_UPLINKS = []
+// The marketplace this module itself is published to — always present and not
+// removable in the UI, so a fresh install ships with a real source out of the box.
+const PINNED_SOURCE = 'pa1nd/atelier-modules'
+// Seeded uplinks for a fresh instance — just the pinned one. The operator adds
+// more (owner/repo, a git URL, or a local path). See docs/quickstart.md.
+const DEFAULT_UPLINKS = [{ source: PINNED_SOURCE }]
 
 const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null } }
 const exists = (p) => { try { fs.accessSync(p); return true } catch { return false } }
@@ -270,6 +273,12 @@ export default {
 
     const saveUplinks = () => { fs.mkdirSync(ctx.dataDir, { recursive: true }); fs.writeFileSync(uplinksFile, JSON.stringify(slot.uplinks, null, 2)) }
     slot.uplinks ??= (Array.isArray(readJson(uplinksFile)) && readJson(uplinksFile).length ? readJson(uplinksFile) : DEFAULT_UPLINKS.slice())
+    // The pinned marketplace is always present (and first) — re-seed it for older
+    // instances whose uplinks.json predates it. It can't be removed via the UI.
+    if (!slot.uplinks.some((u) => u.source === PINNED_SOURCE)) {
+      slot.uplinks.unshift({ source: PINNED_SOURCE })
+      saveUplinks()
+    }
     slot.catalog ??= { marketplaces: [], apps: [], scannedAt: 0 }
     slot.detail ??= {}
     slot.scanning ??= false
@@ -360,7 +369,7 @@ export default {
             key: r.key, source: r.source, kind: r.kind, error: r.error || null,
             ...r.marketplace, appCount: r.apps.length, chromes: r.chromes || [], updatedAt: Date.now(),
           })
-          slot.detail[r.key] = { dir: r.dir, base: r.base || r.dir, source: r.source, name: r.marketplace.name, apps: Object.fromEntries(r.apps.map((a) => [a.id, a])) }
+          slot.detail[r.key] = { dir: r.dir, base: r.base || r.dir, source: r.source, name: r.marketplace.name, publisher: r.marketplace.publisher || null, homepage: r.marketplace.homepage || null, apps: Object.fromEntries(r.apps.map((a) => [a.id, a])) }
           const pm = prev[r.key] || {}
           state[r.key] = {}
           for (const a of r.apps) {
@@ -432,6 +441,7 @@ export default {
       const planSteps = plan.steps.filter((s) => !(s.kind === 'note' && nodeDeps.includes(s.label)))
       res.json({
         ...a, uplink, uplinkName: d.name, source: d.source,
+        publisher: d.publisher || null, mktHomepage: d.homepage || null,   // the marketplace's publisher / homepage
         descriptionHtml: mdToHtml(a.description || ''),
         screenshots,
         installed: !!inf, updatable: !!inf && inf.version !== a.version, workspace: inf ? inf.ws : null,
@@ -445,7 +455,7 @@ export default {
     router.get('/uplinks', (req, res) => res.json({
       uplinks: slot.uplinks.map((u) => {
         const mk = slot.catalog.marketplaces.find((m) => m.key === slugOf(u.source)) || {}
-        return { source: u.source, name: mk.name || null, addedAt: u.addedAt || null, appCount: mk.appCount || 0, chromes: mk.chromes || [], kind: mk.kind || null, error: mk.error || null }
+        return { source: u.source, name: mk.name || null, addedAt: u.addedAt || null, appCount: mk.appCount || 0, chromes: mk.chromes || [], kind: mk.kind || null, error: mk.error || null, pinned: u.source === PINNED_SOURCE }
       }),
       scannedAt: slot.catalog.scannedAt,
     }))
@@ -466,6 +476,7 @@ export default {
 
     router.post('/uplinks/remove', async (req, res) => {
       const { source } = await req.json()
+      if (source === PINNED_SOURCE) return res.json({ error: 'this marketplace is built in and can’t be removed' }, 400)
       const u = slot.uplinks.find((x) => x.source === source)
       slot.uplinks = slot.uplinks.filter((x) => x.source !== source)
       delete slot.detail[slugOf(source)]

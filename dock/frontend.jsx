@@ -259,7 +259,7 @@ function Hero({ onDocs, onConfigure }) {
         <Wordmark tone="light" />
         <div className="flex gap-1.5">
           <button onClick={() => onDocs()} className="cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium text-white/90 transition-colors hover:bg-white/15"><Icon name="book-open" size={15} className="mr-1.5 inline" />Docs</button>
-          <button onClick={onConfigure} className="cursor-pointer rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-white/25"><Icon name="settings-2" size={15} className="mr-1.5 inline" />Configure</button>
+          <button onClick={onConfigure} className="cursor-pointer rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-white/25"><Icon name="settings-2" size={15} className="mr-1.5 inline" />Configure Atelier</button>
         </div>
       </div>
       <div className="relative grid items-center gap-8 px-6 pb-12 pt-8 md:grid-cols-2 lg:px-10 lg:pb-16 lg:pt-10">
@@ -503,10 +503,12 @@ function AppDetail({ uplink, id, onBack }) {
 
         <div className="grid gap-6 p-6 lg:grid-cols-[1fr_260px]">
           <div className="min-w-0">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">About</h3>
-            {app.descriptionHtml
-              ? <div className="mp-prose mt-2 text-sm text-zinc-700 dark:text-zinc-300" dangerouslySetInnerHTML={{ __html: app.descriptionHtml }} />
-              : <Text className="mt-2">{app.tagline}</Text>}
+            {(app.descriptionHtml || app.tagline) && <>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">About</h3>
+              {app.descriptionHtml
+                ? <div className="mp-prose mt-2 text-sm text-zinc-700 dark:text-zinc-300" dangerouslySetInnerHTML={{ __html: app.descriptionHtml }} />
+                : <Text className="mt-2">{app.tagline}</Text>}
+            </>}
 
             <h3 className="mt-6 text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">What it adds</h3>
             <div className="mt-2 flex items-center gap-3 rounded-xl border border-zinc-950/10 bg-zinc-950/[0.02] px-4 py-3 text-sm dark:border-white/10 dark:bg-white/[0.02]">
@@ -524,7 +526,7 @@ function AppDetail({ uplink, id, onBack }) {
           </div>
 
           <div className="overflow-hidden rounded-xl border border-zinc-950/10 dark:border-white/10">
-            <Spec k="Publisher" v={app.author || '—'} />
+            {app.author && <Spec k="Author" v={app.author} />}
             <Spec k="Version" v={'v' + app.version} />
             <Spec k="Category" v={app.category} />
             <Spec k="Surfaces" v={(app.surfaces || []).join(' · ') || '—'} />
@@ -536,6 +538,7 @@ function AppDetail({ uplink, id, onBack }) {
               return parts.length ? parts.join(', ') : 'None'
             })()} />
             <Spec k="Marketplace" v={app.uplinkName} />
+            {app.publisher && <Spec k="Publisher" v={app.publisher} />}
           </div>
         </div>
       </div>
@@ -614,7 +617,9 @@ function Uplinks({ reload, navigate }) {
               {u.error && <div className="mt-0.5 text-xs text-red-600 dark:text-red-400">⚠ {u.error}</div>}
             </div>
             <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{u.appCount} apps</span>
-            <button onClick={() => remove(u.source)} disabled={removing.has(u.source)} title="Remove" className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-lg text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-default disabled:opacity-50"><Icon name={removing.has(u.source) ? 'loader-circle' : 'trash-2'} size={15} className={removing.has(u.source) ? 'animate-spin' : ''} /></button>
+            {u.pinned
+              ? <span title="Built in — this marketplace can’t be removed" className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-zinc-500/15 px-2 py-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400"><Icon name="lock" size={12} /> Built-in</span>
+              : <button onClick={() => remove(u.source)} disabled={removing.has(u.source)} title="Remove" className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-lg text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-default disabled:opacity-50"><Icon name={removing.has(u.source) ? 'loader-circle' : 'trash-2'} size={15} className={removing.has(u.source) ? 'animate-spin' : ''} /></button>}
           </div>
         ))}
         {list && !list.length && <Text>No marketplaces configured.</Text>}
@@ -1412,7 +1417,7 @@ function AppsWorkspaces({ cfg, navigate, refresh }) {
                                 : <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"><Icon name="link-2" size={10} /> linked</span>}
                             {m.updatable && <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400"><Icon name="arrow-up" size={10} /> update</span>}
                           </div>
-                          {ch && <span className="flex items-center gap-1 text-[10.5px] text-zinc-400 dark:text-zinc-500"><span className="h-1.5 w-1.5 rounded-full" style={{ background: colorOf(ch) }} />{ch}</span>}
+                          <span className="block truncate text-[10.5px] text-zinc-400 dark:text-zinc-500">{id}</span>
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
                           {m.updatable && <button onClick={() => doUpdate(it)} disabled={updating.has(id)} title="Update" className="inline-flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-500/10 disabled:opacity-60 dark:text-blue-400">{updating.has(id) && <Icon name="loader-circle" size={12} className="animate-spin" />}{updating.has(id) ? 'Updating…' : 'Update'}</button>}
@@ -1894,7 +1899,7 @@ function Docs({ slug, navigate, onBack }) {
 }
 
 /* ---- root ----------------------------------------------------------------- */
-export const meta = { name: 'Atelier', icon: 'store', primary: true }
+export const meta = { name: 'Atelier', icon: 'store', primary: true, configure: 'config' }
 
 export default function Module() {
   const { path, navigate } = window.__atelier.useRoute()

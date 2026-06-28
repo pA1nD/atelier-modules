@@ -22,22 +22,6 @@
       "vendoredAt": "2026-06-25T05:23:57.830Z"
     },
     {
-      "id": "dock",
-      "version": "1.0.0",
-      "requires": [],
-      "name": "Atelier",
-      "icon": "store",
-      "tagline": "The **marketplace module** — the home an Atelier user opens first: a place to",
-      "category": "Other",
-      "description": "The **marketplace module** — the home an Atelier user opens first: a place to",
-      "screenshots": [],
-      "source": {
-        "tag": "v1.0.0",
-        "commit": "7ffa59105b8a3d25156d980976777f636b0f4aa7"
-      },
-      "vendoredAt": "2026-06-25T05:23:58.123Z"
-    },
-    {
       "id": "claude5iq",
       "version": "1.0.0",
       "requires": [],
@@ -55,6 +39,42 @@
         "commit": "313f547a9bcfbfde3099c2041b7976ec339ae877"
       },
       "vendoredAt": "2026-06-28T19:10:30.883Z"
+    },
+    {
+      "id": "dock",
+      "version": "1.1.0",
+      "requires": [
+        {
+          "brew": [
+            "git",
+            "gh",
+            "uv"
+          ]
+        },
+        {
+          "note": "macOS only — relies on launchd/launchctl + ~/Library/LaunchAgents plists"
+        },
+        {
+          "note": "Homebrew required to install apps' declared system CLIs"
+        },
+        {
+          "note": "gh needed for private/authenticated marketplace repos"
+        }
+      ],
+      "name": "Atelier",
+      "icon": "store",
+      "tagline": "The **marketplace module** — the home an Atelier user opens first: a place to",
+      "category": "Other",
+      "description": "The **marketplace module** — the home an Atelier user opens first: a place to",
+      "tags": [],
+      "homepage": null,
+      "author": null,
+      "screenshots": [],
+      "source": {
+        "tag": "v1.1.0",
+        "commit": "78af30077dfbf156f67c9eeaf6e6d4e2c0cc4b68"
+      },
+      "vendoredAt": "2026-06-28T19:25:31.279Z"
     }
   ],
   "icon": "blocks",
