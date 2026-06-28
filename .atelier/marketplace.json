@@ -36,6 +36,25 @@
         "commit": "7ffa59105b8a3d25156d980976777f636b0f4aa7"
       },
       "vendoredAt": "2026-06-25T05:23:58.123Z"
+    },
+    {
+      "id": "claude5iq",
+      "version": "1.0.0",
+      "requires": [],
+      "name": "claude5iq",
+      "icon": "sparkles",
+      "tagline": "",
+      "category": "Other",
+      "description": "",
+      "tags": [],
+      "homepage": null,
+      "author": null,
+      "screenshots": [],
+      "source": {
+        "tag": "v1.0.0",
+        "commit": "313f547a9bcfbfde3099c2041b7976ec339ae877"
+      },
+      "vendoredAt": "2026-06-28T19:10:30.883Z"
     }
   ],
   "icon": "blocks",
