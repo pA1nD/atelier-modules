@@ -6,29 +6,6 @@
   "description": "atelier-chrome + dock — a starter Atelier marketplace.",
   "apps": [
     {
-      "id": "claude5iq",
-      "version": "1.1.0",
-      "requires": [
-        {
-          "note": "macOS or Linux — the live deck reads running processes via pgrep / ps / lsof, so the dashboard will not populate on Windows."
-        }
-      ],
-      "name": "Claude 5IQ",
-      "icon": "sparkles",
-      "tagline": "The five systems that take Claude Code from clever to genuinely sharp — taught in plain language, then switched on without leaving the page.",
-      "category": "Developer Tools",
-      "description": "**Claude 5IQ** is a guided setup for the five systems that take Claude Code from clever to genuinely sharp — each a **+1 IQ** beat, wrapped in a live deck that reports your *real* machine. It teaches every system in plain language, then lets you **turn it on without leaving the page**.\n\n**The five systems**\n\n- **Session Codes** — one session id → a callsign, emoji, and colour, computed by one hash the terminal, dashboard, and browser all agree on.\n- **The Status Bar** — the Claude Code statusline dissected segment by segment; wire it into your settings (merge, never clobber — backed up first).\n- **The Horse Browser** — a one-WebSocket CDP harness driving a dedicated Chrome that never steals focus, with a live Agent Monitor wall.\n- **gwx** — one safe CLI over every Google account; reads fan out in parallel and any multi-account write is refused.\n- **CLAUDE.md** — global vs project notes drawn as stacked paper; install the four chapters with a backup.\n\nA sticky live deck reports tools on your PATH, the browser CDP, running sessions as emoji codenames, and known gwx accounts — condensing as you scroll.",
-      "tags": [],
-      "homepage": null,
-      "author": null,
-      "screenshots": [],
-      "source": {
-        "tag": "v1.1.0",
-        "commit": "333f5232df5137050d440162d805d5d9e5f7195d"
-      },
-      "vendoredAt": "2026-06-29T00:00:25.113Z"
-    },
-    {
       "id": "dock",
       "version": "1.1.0",
       "requires": [
@@ -87,6 +64,35 @@
         "commit": "1c130963165fe922ff56c4b4d4873204ac4a97bc"
       },
       "vendoredAt": "2026-06-29T19:54:56.979Z"
+    },
+    {
+      "id": "claude5iq",
+      "version": "1.1.0",
+      "requires": [
+        {
+          "note": "macOS"
+        },
+        {
+          "note": "Claude Code CLI (`claude`) — the deck reads ~/.claude and tracks live sessions"
+        },
+        {
+          "note": "Optional integrations the deck can install for you: horse-browser + Chrome for Testing (CDP on :9223), browser-harness, gwx/gws (Google Workspace CLI), codex, jq"
+        }
+      ],
+      "name": "Claude 5IQ",
+      "icon": "sparkles",
+      "tagline": "The five systems that take Claude Code from clever to genuinely sharp — taught in plain language, then switched on without leaving the page.",
+      "category": "Developer Tools",
+      "description": "**Claude 5IQ** is a guided setup for the five systems that take Claude Code from clever to genuinely sharp — each a **+1 IQ** beat, wrapped in a live deck that reports your *real* machine. It teaches every system in plain language, then lets you **turn it on without leaving the page**.\n\n**The five systems**\n\n- **Session Codes** — one session id → a callsign, emoji, and colour, computed by one hash the terminal, dashboard, and browser all agree on.\n- **The Status Bar** — the Claude Code statusline dissected segment by segment; wire it into your settings (merge, never clobber — backed up first).\n- **The Horse Browser** — a one-WebSocket CDP harness driving a dedicated Chrome that never steals focus, with a live Agent Monitor wall.\n- **gwx** — one safe CLI over every Google account; reads fan out in parallel and any multi-account write is refused.\n- **CLAUDE.md** — global vs project notes drawn as stacked paper; install the four chapters with a backup.\n\nA sticky live deck reports tools on your PATH, the browser CDP, running sessions as emoji codenames, and known gwx accounts — condensing as you scroll.",
+      "tags": [],
+      "homepage": null,
+      "author": null,
+      "screenshots": [],
+      "source": {
+        "tag": "v1.1.0",
+        "commit": "2f7b87bad0e1d602aa38e32e02448760db9a5d36"
+      },
+      "vendoredAt": "2026-06-29T19:55:17.657Z"
     }
   ],
   "icon": "blocks",

@@ -358,21 +358,48 @@ export function VersionTag({ v, run, dark }) {
   )
 }
 
-export function ActionConsole({ entry, title = 'output' }) {
+export function ActionConsole({ entry, title = 'output', onClose }) {
   const ref = useRef(null)
+  const [closed, setClosed] = useState(false)
+  const [count, setCount] = useState(5)
+  const [autoClose, setAutoClose] = useState(true)
+  const status = entry && entry.status
   useEffect(() => { const el = ref.current; if (el) el.scrollTop = el.scrollHeight }, [entry && entry.logs && entry.logs.length])
-  if (!entry || !entry.logs || (!entry.logs.length && entry.status === 'idle')) return null
+  // a fresh run re-opens the console and re-arms the auto-close
+  useEffect(() => { if (status === 'running') { setClosed(false); setAutoClose(true); setCount(5) } }, [status])
+  // on success, count down from 5s then close (unless the user chose to keep it open); failures stay open
+  useEffect(() => {
+    if (status !== 'done' || !autoClose) return
+    let c = 5; setCount(c)
+    const iv = setInterval(() => { c -= 1; setCount(c); if (c <= 0) { clearInterval(iv); setClosed(true); onClose && onClose() } }, 1000)
+    return () => clearInterval(iv)
+  }, [status, autoClose])
+  if (closed) return null
+  if (!entry || !entry.logs || (!entry.logs.length && status === 'idle')) return null
   const color = (s) => s === 'ok' ? 'text-emerald-400' : s === 'stderr' ? 'text-rose-400' : s === 'cmd' ? 'text-sky-300' : 'text-zinc-300'
   return (
     <div className="cl-pop mt-3 overflow-hidden rounded-xl border border-zinc-950/10 shadow-sm dark:border-white/10">
       <div className="flex items-center gap-1.5 border-b border-white/10 bg-zinc-900 px-3 py-2">
         <span className="size-2.5 rounded-full bg-red-400/70" /><span className="size-2.5 rounded-full bg-amber-400/70" /><span className="size-2.5 rounded-full bg-green-400/70" />
-        <span className="cl-mono ml-2 text-[10.5px] text-zinc-400">{title}{entry.status === 'running' ? ' · running…' : entry.status === 'done' ? ' · done' : entry.status === 'failed' ? ' · failed' : ''}</span>
+        <span className="cl-mono ml-2 text-[10.5px] text-zinc-400">{title}{status === 'running' ? ' · running…' : status === 'done' ? ' · done' : status === 'failed' ? ' · failed' : ''}</span>
       </div>
       <div ref={ref} className="cl-mono max-h-56 overflow-auto bg-zinc-950 p-3 text-[11.5px] leading-relaxed">
         {entry.logs.map((l, i) => <div key={i} className={cn('whitespace-pre-wrap break-words', color(l.stream))}>{l.line}</div>)}
-        {entry.status === 'running' && <div className="text-zinc-600">▌</div>}
+        {status === 'running' && <div className="text-zinc-600">▌</div>}
       </div>
+      {status === 'done' && (
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-emerald-500/25 bg-emerald-500/10 px-3.5 py-3">
+          <span className="inline-flex items-center gap-2 text-[15px] font-bold text-emerald-400"><Icon name="check" size={18} /> All done — everything worked.</span>
+          {autoClose
+            ? <span className="cl-mono text-[11px] text-zinc-400">closing in {count}s · <button onClick={() => setAutoClose(false)} className="underline decoration-zinc-600 underline-offset-2 transition-colors hover:text-zinc-200">keep open</button></span>
+            : <button onClick={() => { setClosed(true); onClose && onClose() }} className="cl-mono text-[11px] text-zinc-400 underline decoration-zinc-600 underline-offset-2 transition-colors hover:text-zinc-200">close</button>}
+        </div>
+      )}
+      {status === 'failed' && (
+        <div className="flex items-center gap-2 border-t border-rose-500/25 bg-rose-500/10 px-3.5 py-2.5 text-[12.5px] font-semibold text-rose-300">
+          <span className="size-2 shrink-0 rounded-full bg-rose-400" /> Didn’t finish — left open so you can see what happened.
+        </div>
+      )}
     </div>
   )
 }

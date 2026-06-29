@@ -27,14 +27,6 @@ const CHAPTERS = [
 const SLUGS = CHAPTERS.map((c) => c.slug)
 const IQ = CHAPTERS.length
 
-// dev preview: synthesize the CLAUDE.md status — installed shows our four chapters; uninstalled
-// simulates a fresh machine where no global notes exist at all.
-function previewClaudeMd(g, installed) {
-  if (!installed) return { path: (g && g.path) || '~/.claude/CLAUDE.md', exists: false, hasOurs: false, hasFourChapters: false, bytes: 0, chapters: [], sections: [] }
-  const base = ((g && g.sections) || []).filter((s) => !s.ours)
-  return { ...(g || {}), path: (g && g.path) || '~/.claude/CLAUDE.md', exists: true, hasOurs: true, hasFourChapters: true, chapters: ['Think Before Coding', 'Simplicity First', 'Surgical Changes', 'Goal-Driven Execution'], sections: [{ title: 'Instructions', ours: true }, ...base] }
-}
-
 export const meta = { chrome: 'atelier-chrome', icon: 'sparkles', name: `Claude ${IQ}IQ` }
 
 // is a system on? (drives the little health dot on the left)
@@ -129,6 +121,25 @@ function SystemData({ slug, snap, teaser }) {
   return todo
 }
 
+// before the first snapshot lands, snap is null — we can't tell "off" from "not loaded
+// yet", so the off-state Install button would flash. Show a placeholder instead (the
+// title is static, so it stays); the pulsing pill holds the button/arrow's spot.
+function SystemCardSkeleton({ c }) {
+  return (
+    <div className="block w-full rounded-2xl border border-[#141413]/12 bg-white/25 p-4 backdrop-blur dark:border-white/10 dark:bg-white/[0.05]">
+      <div className="flex items-center gap-3">
+        <SystemIcon icon={c.icon} color={c.color} size={34} />
+        <span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-[#141413] dark:text-zinc-50">{c.title}</span>
+        <span className="h-5 w-16 shrink-0 animate-pulse rounded-full bg-[#141413]/[0.07] dark:bg-white/10" />
+      </div>
+      <div className="mt-2.5 flex items-start gap-2.5">
+        <span className="mt-[6px] size-2 shrink-0 animate-pulse rounded-full bg-[#141413]/15 dark:bg-white/15" />
+        <div className="min-w-0 flex-1 py-1"><div className="h-2.5 w-3/5 animate-pulse rounded-full bg-[#141413]/10 dark:bg-white/10" /></div>
+      </div>
+    </div>
+  )
+}
+
 function SystemCard({ c, snap, onJump, actions, onInstall }) {
   const on = systemOn(c.slug, snap)
   const acts = INSTALL_ACTIONS[c.slug]
@@ -157,6 +168,7 @@ function SystemCard({ c, snap, onJump, actions, onInstall }) {
 /* ── full-height hero — Claude's warm identity over the dock base ───────────── */
 function Hero({ snap, onJump, actions }) {
   const byId = actions?.byId, run = actions?.run
+  const loading = !snap   // first snapshot still in flight — show the loading deck, not the off/Install state
   const [consoleActs, setConsoleActs] = useState([])
   const consoleRef = useRef(null)
   // run install actions AND surface their logs in the hero's own console (not just the chapters)
@@ -177,7 +189,7 @@ function Hero({ snap, onJump, actions }) {
     logs: consoleActs.flatMap((a) => (byId?.[a]?.logs || []).map((l) => ({ stream: l.stream, line: consoleActs.length > 1 ? `${ACTION_LABEL[a] || a} · ${l.line}` : l.line }))),
   } : null
   return (
-    <header className="relative isolate -mx-6 -mt-6 mb-12 flex min-h-[100svh] flex-col overflow-hidden bg-[#faf9f5] text-[#141413] lg:-mx-10 lg:-mt-10 dark:bg-[#14100c] dark:text-zinc-50">
+    <header className={cn('relative isolate -mx-6 -mt-6 mb-12 flex flex-col overflow-hidden bg-[#faf9f5] text-[#141413] lg:-mx-10 lg:-mt-10 dark:bg-[#14100c] dark:text-zinc-50', !heroEntry && 'min-h-[100svh]')}>
       {/* warm coral wash — Claude's atmosphere, very soft */}
       <div className="pointer-events-none absolute -left-32 -top-40 -z-10 h-[34rem] w-[34rem] rounded-full bg-[#d97757]/15 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-44 -right-12 -z-10 h-[42rem] w-[42rem] rounded-full bg-[#e9a87c]/25 blur-3xl" />
@@ -205,12 +217,14 @@ function Hero({ snap, onJump, actions }) {
           <div>
             <div className="mb-3 flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#141413]/45 dark:text-zinc-500">the five systems</span>
-              <span className="cl-mono inline-flex items-center gap-1.5 text-[11px] text-[#141413]/45 dark:text-zinc-500"><span className={cn('size-1.5 rounded-full', snap?.cdp?.up ? 'bg-emerald-500' : 'bg-zinc-300')} /> live on your machine</span>
+              <span className="cl-mono inline-flex items-center gap-1.5 text-[11px] text-[#141413]/45 dark:text-zinc-500"><span className={cn('size-1.5 rounded-full', loading ? 'animate-pulse bg-amber-400' : snap?.cdp?.up ? 'bg-emerald-500' : 'bg-zinc-300')} /> {loading ? 'reading your machine…' : 'live on your machine'}</span>
             </div>
             <div className="space-y-2">
-              {CHAPTERS.map((c) => <SystemCard key={c.slug} c={c} snap={snap} onJump={onJump} actions={actions} onInstall={heroInstall} />)}
+              {CHAPTERS.map((c) => loading
+                ? <SystemCardSkeleton key={c.slug} c={c} />
+                : <SystemCard key={c.slug} c={c} snap={snap} onJump={onJump} actions={actions} onInstall={heroInstall} />)}
             </div>
-            {installable.length > 0 && (
+            {!loading && installable.length > 0 && (
               <button onClick={() => heroInstall(allActs)} disabled={installingAll} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#d97757] px-4 py-3 text-[14px] font-semibold text-white shadow-[0_10px_24px_-10px_rgba(217,119,87,0.6)] transition hover:bg-[#c15f3c] disabled:opacity-70">
                 <Icon name="sparkles" size={16} /> {installingAll ? 'Installing everything…' : `Install all ${installable.length} systems`}
               </button>
@@ -221,7 +235,7 @@ function Hero({ snap, onJump, actions }) {
 
       {heroEntry ? (
         <div ref={consoleRef} className="mx-auto mb-7 w-full max-w-2xl px-6 lg:px-10">
-          <ActionConsole entry={heroEntry} title={consoleActs.length > 1 ? `installing ${consoleActs.length} systems` : `installing ${ACTION_LABEL[consoleActs[0]] || consoleActs[0]}`} />
+          <ActionConsole entry={heroEntry} onClose={() => setConsoleActs([])} title={consoleActs.length > 1 ? `installing ${consoleActs.length} systems` : `installing ${ACTION_LABEL[consoleActs[0]] || consoleActs[0]}`} />
         </div>
       ) : (
         <button onClick={() => onJump('codes')} className="relative mx-auto mb-7 flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-[#141413]/45 transition hover:text-[#141413] dark:text-zinc-500 dark:hover:text-zinc-50">scroll to begin <Icon name="chevron-down" size={16} /></button>
@@ -232,8 +246,7 @@ function Hero({ snap, onJump, actions }) {
 
 
 /* ── slim dock-style chapter nav (sticky) ──────────────────────────────────── */
-function ChapterNav({ active, condensed, onJump, slPreview, setSlPreview, dev }) {
-  const cycleSl = () => setSlPreview((p) => p === 'auto' ? 'installed' : p === 'installed' ? 'uninstalled' : 'auto')
+function ChapterNav({ active, condensed, onJump }) {
   return (
     <div className="sticky top-3 z-30 mb-10 flex justify-center">
       <div className={cn('flex max-w-full items-center gap-1 overflow-x-auto rounded-full border border-zinc-950/10 bg-white/85 p-1.5 shadow-lg shadow-zinc-950/[0.04] backdrop-blur-md dark:border-white/10 dark:bg-white/[0.05]', condensed && 'scale-[0.98]')}>
@@ -244,12 +257,6 @@ function ChapterNav({ active, condensed, onJump, slPreview, setSlPreview, dev })
             <span className="hidden sm:inline">{c.title}</span><span className="sm:hidden">{c.n}</span>
           </button>
         ))}
-        {dev && (
-          <button onClick={cycleSl} title="dev only — preview the status bar as uninstalled / installed / auto (the real state)"
-            className="cl-mono ml-1 shrink-0 rounded-full border border-dashed border-zinc-950/25 px-2.5 py-1.5 text-[11px] font-medium text-zinc-400 transition-colors hover:text-zinc-700 dark:border-white/25 dark:text-zinc-500 dark:hover:text-zinc-200">
-            preview:{slPreview}
-          </button>
-        )}
       </div>
     </div>
   )
@@ -265,7 +272,6 @@ export default function Module() {
 
   const [active, setActive] = useState('')
   const [condensed, setCondensed] = useState(false)
-  const [slPreview, setSlPreview] = useState('auto')   // dev-only: preview the status bar as un/installed
   const activeRef = useRef('')
   const navRef = useRef(navigate); navRef.current = navigate
   const firstScroll = useRef(true)
@@ -300,35 +306,17 @@ export default function Module() {
 
   const onJump = (slug) => { firstScroll.current = false; navRef.current(slug) }
 
-  // dev-only (localhost): override the live statusline state so the chapter can be
-  // previewed as uninstalled / installed without changing the real machine.
-  const dev = typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-  // 'installed' shows everything set up; 'uninstalled' simulates a fresh machine where nothing
-  // exists yet — the live systems (running browser, daemons, accounts, sessions) blanked too.
-  const inst = slPreview === 'installed'
-  const blankCdp = { up: false, browser: null, protocol: null, tabs: 0, tabSample: [], pids: [] }
-  const viewSnap = (!snap || slPreview === 'auto') ? snap : {
-    ...snap,
-    statusline: { ...(snap.statusline || {}), wired: inst, flavor: inst ? (snap.statusline?.flavor || 'codename') : null, command: inst ? (snap.statusline?.command || '~/.claude/statusline.sh') : null },
-    claudemd: { ...(snap.claudemd || {}), global: previewClaudeMd(snap.claudemd?.global, inst) },
-    harness: { ...(snap.harness || {}), installed: inst, sessions: inst ? (snap.harness?.sessions || 3) : 0, daemons: inst ? (snap.harness?.daemons || []) : [] },
-    tools: Object.fromEntries(Object.entries(snap.tools || {}).map(([k, v]) => [k, { ...v, installed: inst }])),
-    cdp: inst ? (snap.cdp?.up ? snap.cdp : { ...blankCdp, up: true, browser: snap.cdp?.browser || 'Chrome/150.0.0.0' }) : blankCdp,
-    gwx: inst ? (snap.gwx?.accounts?.length ? snap.gwx : { installed: true, accounts: ['work', 'personal'], authed: ['work', 'personal'] }) : { installed: false, accounts: [], authed: [] },
-    sessions: inst ? snap.sessions : { running: [], runningCount: 0, active: 0, total: 0, top: [] },
-  }
-
   return (
     <div className="cl-root relative">
       <div ref={topSentinel} className="pointer-events-none absolute left-0 top-0 h-px w-full" />
-      <Hero snap={viewSnap} onJump={onJump} actions={actions} />
-      <ChapterNav active={active} condensed={condensed} onJump={onJump} slPreview={slPreview} setSlPreview={setSlPreview} dev={dev} />
+      <Hero snap={snap} onJump={onJump} actions={actions} />
+      <ChapterNav active={active} condensed={condensed} onJump={onJump} />
       <div id="ch-" data-slug="" className="h-px" />
       {CHAPTERS.map((c, i) => {
         const next = CHAPTERS[i + 1]
         return (
           <section key={c.slug} id={'ch-' + c.slug} data-slug={c.slug} className="scroll-mt-24 py-12 sm:py-20">
-            <c.Comp self={self} snap={viewSnap} actions={actions} refresh={refresh} accent={c.color} icon={c.icon} n={c.n}
+            <c.Comp self={self} snap={snap} actions={actions} refresh={refresh} accent={c.color} icon={c.icon} n={c.n}
               onNext={next ? () => onJump(next.slug) : null} nextTitle={next ? next.title : null} />
           </section>
         )
