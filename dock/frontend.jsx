@@ -1899,7 +1899,7 @@ function Docs({ slug, navigate, onBack }) {
 }
 
 /* ---- root ----------------------------------------------------------------- */
-export const meta = { name: 'Atelier', icon: 'store', primary: true, configure: 'config' }
+export const meta = { name: 'Atelier', icon: 'store', primary: true, configure: 'config', chrome: 'atelier-chrome' }
 
 export default function Module() {
   const { path, navigate } = window.__atelier.useRoute()

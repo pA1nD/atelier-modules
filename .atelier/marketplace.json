@@ -6,42 +6,6 @@
   "description": "atelier-chrome + dock — a starter Atelier marketplace.",
   "apps": [
     {
-      "id": "dock",
-      "version": "1.1.0",
-      "requires": [
-        {
-          "brew": [
-            "git",
-            "gh",
-            "uv"
-          ]
-        },
-        {
-          "note": "macOS only — relies on launchd/launchctl + ~/Library/LaunchAgents plists"
-        },
-        {
-          "note": "Homebrew required to install apps' declared system CLIs"
-        },
-        {
-          "note": "gh needed for private/authenticated marketplace repos"
-        }
-      ],
-      "name": "Atelier",
-      "icon": "store",
-      "tagline": "The **marketplace module** — the home an Atelier user opens first: a place to",
-      "category": "Other",
-      "description": "The **marketplace module** — the home an Atelier user opens first: a place to",
-      "tags": [],
-      "homepage": null,
-      "author": null,
-      "screenshots": [],
-      "source": {
-        "tag": "v1.1.0",
-        "commit": "78af30077dfbf156f67c9eeaf6e6d4e2c0cc4b68"
-      },
-      "vendoredAt": "2026-06-28T19:25:31.279Z"
-    },
-    {
       "id": "atelier-chrome",
       "version": "1.1.0",
       "requires": [],
@@ -82,6 +46,45 @@
         "commit": "333f5232df5137050d440162d805d5d9e5f7195d"
       },
       "vendoredAt": "2026-06-29T00:00:25.113Z"
+    },
+    {
+      "id": "dock",
+      "version": "1.1.0",
+      "requires": [
+        {
+          "brew": [
+            "git",
+            "gh",
+            "uv"
+          ]
+        },
+        {
+          "note": "Node 24+ / npm"
+        },
+        {
+          "note": "macOS — for running Atelier as a managed background service (launchctl) and Reveal in Finder (open)"
+        },
+        {
+          "note": "GitHub CLI authenticated (`gh auth login`) — only for private marketplaces"
+        },
+        {
+          "note": "atelier-chrome installed (publishes the @atelier/kit primitives dock imports; dock pins it via meta.chrome)"
+        }
+      ],
+      "name": "Atelier",
+      "icon": "store",
+      "tagline": "The **marketplace module** — the home an Atelier user opens first: a place to",
+      "category": "Other",
+      "description": "The **marketplace module** — the home an Atelier user opens first: a place to",
+      "tags": [],
+      "homepage": null,
+      "author": null,
+      "screenshots": [],
+      "source": {
+        "tag": "v1.1.0",
+        "commit": "1ce03d5f5de78264b484404add0c725e6d7a1dee"
+      },
+      "vendoredAt": "2026-06-29T19:54:53.696Z"
     }
   ],
   "icon": "blocks",
