@@ -2,8 +2,9 @@
 
 The default atelier **chrome** (theme) — a minimal, light-first shell whose look is
 inspired by [Tailwind Plus / Catalyst](https://catalyst.tailwindui.com/) (zinc neutrals,
-Inter, hairline borders, a soft white content panel floating on the page) **built entirely
-from stock Tailwind utilities**. It claims the chrome slot via `meta = { isChrome: true, hidden: true }`.
+Inter, hairline borders, a soft white content panel floating on the page), **built from stock
+Tailwind utilities** plus a small hand-written keyframe layer (the agent affordances) and the
+kit's `@headlessui/react` (MIT) primitives. It claims the chrome slot via `meta = { isChrome: true, hidden: true }`.
 
 ## Why this exists / licensing
 
@@ -12,8 +13,16 @@ source, no `--btn-*` optical-border tricks). Only the *look* is inspired by Cata
 is ours, so this chrome — and anything that bundles it (e.g. a marketplace) — ships freely
 under the [MIT license](./LICENSE).
 
+The interactive primitives (Dialog, Dropdown, Listbox, Combobox, Select, Switch, Checkbox,
+Radio, …) are built on **[`@headlessui/react`](https://github.com/tailwindlabs/headlessui)**,
+which is **MIT** — the same accessibility foundation Catalyst itself uses. We wrap it in our
+own Tailwind styling, so the dependency is license-clean and the kit stays MIT. The chrome is
+esbuild-bundled, so headlessui is baked into the served kit (modules import names, not packages).
+
 > **Rule for contributors:** if you want a Catalyst-style component here, reimplement it from
-> scratch with plain Tailwind — don't copy Catalyst source.
+> scratch — wrap the matching headlessui primitive in our own Tailwind classes. **Never copy
+> Catalyst source** (it's a commercial Tailwind Plus product; copying it would break this
+> chrome's MIT licence).
 
 ## The default greeter
 
@@ -41,16 +50,25 @@ different chrome, set `defaultChrome` in the config.
   (with an `.atelier-overlay-scroll` opt-out so the content panel uses the OS overlay bar instead
   of reserving a gutter) + the agent-affordance keyframes. The shell's scanner compiles the
   utility classes used across the `.jsx` here.
-- `kit.jsx` — the primitives published to modules via `@atelier/kit`: form + typography
-  (`Button`, `Input`, `Field`, `Label`, `Heading`, `Text`, `Badge`, …) plus the **agent
-  affordances** — `AgentBadge` (the standard "hand to an agent" chip), `CopyButton`, `AgentSpark`,
-  which use the `--color-agent` accent. All original Tailwind.
+- `kit.jsx` + per-component files — a **comprehensive component library** published to modules
+  via `@atelier/kit` (one file per component, barrelled in `kit.jsx`). Buttons & status
+  (`Button`, `Badge`/`BadgeButton`), typography (`Heading`, `Subheading`, `Text`, `TextLink`,
+  `Strong`, `Code`, `Link`), forms (`Fieldset`/`Field`/`Label`, `Input`/`InputGroup`, `Textarea`, `Select`,
+  `Switch`, `Checkbox`, `Radio`, `Listbox`, `Combobox`), overlays & menus (`Dialog`, `Alert`,
+  `Dropdown`), data display (`Table`, `DescriptionList`, `Divider`, `Pagination`, `Avatar`),
+  surfaces & identity (`Card`, `Icon`, `Eyebrow`, `SystemIcon`, `Reveal`), and the **agent
+  affordances** (`AgentBadge`, `CopyButton`, `AgentSpark`, on the `--color-agent` accent). Original
+  work, built on `@headlessui/react` (MIT) for the interactive primitives — `_util.jsx` holds
+  shared internals (`cn`, `useDark`, colour helpers, control glyphs). App-shell layout components
+  (Navbar/Sidebar/*Layout) are intentionally not published — a module lives inside the chrome.
 
 ## Icons
 
 Rail icons come from a module's `meta.icon` string in [lucide](https://lucide.dev/icons)'s
-vocabulary (e.g. `meta = { icon: 'chef-hat' }`). Lucide is loaded from a CDN at runtime, so
-this chrome carries no npm dependency. The chrome's own glyphs use the same set.
+vocabulary (e.g. `meta = { icon: 'chef-hat' }`). Lucide is loaded from a CDN at runtime (the kit's
+`Icon` component renders through it), so icons add no npm dependency. The chrome's only bundled
+dependency is `@headlessui/react` (MIT), which powers the kit's interactive primitives; the kit's
+own small control glyphs (checkmarks, chevrons) are inline SVG, not an icon library.
 
 ## Module meta the chrome reads
 

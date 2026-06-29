@@ -6,25 +6,6 @@
   "description": "atelier-chrome + dock — a starter Atelier marketplace.",
   "apps": [
     {
-      "id": "atelier-chrome",
-      "version": "1.1.0",
-      "requires": [],
-      "name": "atelier-chrome",
-      "icon": null,
-      "tagline": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
-      "category": "Other",
-      "description": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
-      "tags": [],
-      "homepage": null,
-      "author": null,
-      "screenshots": [],
-      "source": {
-        "tag": "v1.1.0",
-        "commit": "302b985cf60974e6d83a65e7e5b0c4ff3de23d2e"
-      },
-      "vendoredAt": "2026-06-28T19:25:42.299Z"
-    },
-    {
       "id": "claude5iq",
       "version": "1.1.0",
       "requires": [
@@ -85,6 +66,27 @@
         "commit": "1ce03d5f5de78264b484404add0c725e6d7a1dee"
       },
       "vendoredAt": "2026-06-29T19:54:53.696Z"
+    },
+    {
+      "id": "atelier-chrome",
+      "version": "1.1.0",
+      "requires": [
+        "npm"
+      ],
+      "name": "atelier-chrome",
+      "icon": null,
+      "tagline": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
+      "category": "Other",
+      "description": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
+      "tags": [],
+      "homepage": null,
+      "author": null,
+      "screenshots": [],
+      "source": {
+        "tag": "v1.1.0",
+        "commit": "1c130963165fe922ff56c4b4d4873204ac4a97bc"
+      },
+      "vendoredAt": "2026-06-29T19:54:56.979Z"
     }
   ],
   "icon": "blocks",

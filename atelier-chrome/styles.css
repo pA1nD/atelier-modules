@@ -2,9 +2,10 @@
  *
  * A minimal, light-first chrome whose look is inspired by Catalyst —
  * zinc neutrals, Inter, hairline borders, a soft floating content panel —
- * built entirely from stock Tailwind utilities. Nothing here is copied from
- * Tailwind Plus / Catalyst; only the look is the homage, the code is ours, so
- * this chrome ships freely under the MIT license.
+ * built from stock Tailwind utilities plus the small hand-written keyframe layer
+ * below (the agent affordances). Nothing here is copied from Tailwind Plus /
+ * Catalyst; only the look is the homage, the code is ours, so this chrome ships
+ * freely under the MIT license.
  *
  * Injected into <head> by frontend.jsx (ensureChromeStyles). The shell's
  * Tailwind scanner walks every .jsx in this dir (frontend.jsx, kit.jsx), so
