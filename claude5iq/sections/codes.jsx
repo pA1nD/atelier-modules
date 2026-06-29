@@ -155,7 +155,7 @@ export default function Codes({ snap, accent, icon, n, onNext, nextTitle }) {
   const dark = useDark()
   const [activeSlot, setActiveSlot] = useState(() => hashStages(SAMPLE).slot)
   const running = snap?.sessions?.running || []
-  const rows = running.length ? running : [sessionCode(SAMPLE)]
+  const rows = running.length ? running.slice().sort((a, b) => (a.callsign || '').localeCompare(b.callsign || '')) : [sessionCode(SAMPLE)]
 
   return (
     <div>

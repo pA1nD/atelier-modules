@@ -22,6 +22,9 @@ export const CODE_INK = { red: '#b91c1c', orange: '#c2410c', yellow: '#a16207', 
 // Lighter (~400) variants for callsigns rendered as small text ON DARK surfaces.
 export const CODE_INK_DARK = { red: '#f87171', orange: '#fb923c', yellow: '#facc15', green: '#4ade80', cyan: '#22d3ee', blue: '#60a5fa', purple: '#c084fc', pink: '#f472b6' }
 export const CODE_ORDER = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink']
+// account dot colours — shared by the hero + the gwx section so they always match.
+// Deliberately NO green and NO red (those read as a good/bad status, not an identity).
+export const ACCOUNT_COLORS = ['#2563eb', '#9333ea', '#db2777', '#ea580c', '#0ea5e9', '#ca8a04', '#6366f1', '#c026d3']
 export const CODES = [
   { e: '🔥', c: 'red' }, { e: '🍎', c: 'red' }, { e: '🍓', c: 'red' }, { e: '🍒', c: 'red' }, { e: '🌹', c: 'red' }, { e: '🐞', c: 'red' },
   { e: '🦊', c: 'orange' }, { e: '🍊', c: 'orange' }, { e: '🦁', c: 'orange' }, { e: '🐯', c: 'orange' }, { e: '🥕', c: 'orange' }, { e: '🏀', c: 'orange' },
@@ -94,6 +97,9 @@ const CSS = `
 
 @keyframes cl-pop{ from{ opacity:0; transform:translateY(4px) scale(.96);} to{ opacity:1; transform:none;} }
 .cl-pop{ animation:cl-pop .35s cubic-bezier(.16,1,.3,1) both; }
+/* a gentle fade+rise — the skills detail pane swapping in */
+@keyframes cl-fadein{ from{ opacity:0; transform:translateY(6px);} to{ opacity:1; transform:none;} }
+.cl-fadein{ animation:cl-fadein .24s cubic-bezier(.16,1,.3,1) both; }
 
 /* a slow beacon pulse to pull the eye to a primary call-to-action */
 @keyframes cl-beacon{ 0%{ box-shadow:0 0 0 0 var(--bc, rgba(139,92,246,.5)); } 70%,100%{ box-shadow:0 0 0 12px transparent; } }
@@ -112,7 +118,7 @@ const CSS = `
 @media (prefers-reduced-motion: reduce){
   .cl-reveal{ opacity:1 !important; transform:none !important; transition:none !important; }
   .cl-draw{ stroke-dashoffset:0 !important; animation:none !important; }
-  .cl-cursor,.cl-blink-slow,.cl-tabin,.cl-ripple,.is-in .cl-ink,.cl-slam,.cl-pop,.cl-beacon{ animation:none !important; }
+  .cl-cursor,.cl-blink-slow,.cl-tabin,.cl-ripple,.is-in .cl-ink,.cl-slam,.cl-pop,.cl-fadein,.cl-beacon{ animation:none !important; }
   .cl-ink{ clip-path:none !important; filter:none !important; }
   .cl-root *,.cl-root *::before,.cl-root *::after{ animation-duration:.001ms !important; transition-duration:.001ms !important; scroll-behavior:auto !important; }
 }
@@ -332,6 +338,26 @@ export function ChapterClose({ color = '#3b82f6', gained, onNext, nextTitle, dar
 }
 
 // A live streaming console — the dock code-window, dark, for action WS logs.
+// installed version + a clean "v{latest} available → Update" (an update is always a fresh install,
+// never a kept copy). Updates only show when there's a real upstream to compare against.
+export function VersionTag({ v, run, dark }) {
+  if (!v || !v.installed) return null
+  const update = v.latest && v.upToDate === false && v.action
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+      <code className={cn('cl-mono rounded px-1.5 py-0.5 text-[10.5px] font-medium', dark ? 'bg-white/10 text-zinc-400' : 'bg-zinc-950/[0.05] text-zinc-500 dark:bg-white/10 dark:text-zinc-400')}>{v.version ? 'v' + v.version : 'installed'}</code>
+      {update ? (
+        <>
+          <span className={cn('text-[11px] font-medium', dark ? 'text-amber-400' : 'text-amber-600 dark:text-amber-400')}>v{v.latest} available</span>
+          {run && <button onClick={() => run(v.action, { confirm: true })} className={cn('rounded-full border px-2 py-[3px] text-[10.5px] font-semibold transition', dark ? 'border-amber-400/40 text-amber-300 hover:bg-amber-400/10' : 'border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300')}>Update</button>}
+        </>
+      ) : v.upToDate === true ? (
+        <span className={cn('text-[10.5px]', dark ? 'text-zinc-500' : 'text-zinc-400 dark:text-zinc-500')}>up to date</span>
+      ) : null}
+    </span>
+  )
+}
+
 export function ActionConsole({ entry, title = 'output' }) {
   const ref = useRef(null)
   useEffect(() => { const el = ref.current; if (el) el.scrollTop = el.scrollHeight }, [entry && entry.logs && entry.logs.length])

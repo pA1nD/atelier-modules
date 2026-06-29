@@ -8,7 +8,7 @@
  * dashboard after. Shared system in lib.jsx.
  */
 
-import { useChromeStyles, useSnapshot, useActions, Icon, SystemIcon, cn, CODE_INK, CODE_ORDER, CODE_COLORS, useDark, inkFor } from './lib.jsx'
+import { useChromeStyles, useSnapshot, useActions, ActionConsole, Icon, SystemIcon, cn, ACCOUNT_COLORS, useDark, inkFor } from './lib.jsx'
 import Codes from './sections/codes.jsx'
 import StatusBar from './sections/statusbar.jsx'
 import ClaudeMd from './sections/claudemd.jsx'
@@ -22,7 +22,7 @@ const CHAPTERS = [
   { slug: 'statusbar', n: '02', title: 'The Status Bar', icon: 'terminal',    color: '#3b82f6', teaser: 'A line that says where you are.', Comp: StatusBar },
   { slug: 'browser',   n: '03', title: 'The Horse Browser', icon: 'compass',  color: '#10b981', teaser: 'A browser your agents quietly share.', Comp: Browser },
   { slug: 'gwx',       n: '04', title: 'gwx',            icon: 'mails',       color: '#f59e0b', teaser: 'Every inbox, one safe command.', Comp: Gwx },
-  { slug: 'claudemd',  n: '05', title: 'CLAUDE.md',      icon: 'layers',      color: '#f43f5e', teaser: 'Notes that teach Claude your way.', Comp: ClaudeMd },
+  { slug: 'claudemd',  n: '05', title: 'CLAUDE.md',      icon: 'layers',      color: '#d946ef', teaser: 'Notes that teach Claude your way.', Comp: ClaudeMd },
 ]
 const SLUGS = CHAPTERS.map((c) => c.slug)
 const IQ = CHAPTERS.length
@@ -45,7 +45,7 @@ function systemOn(slug, snap) {
     case 'statusbar': return !!sl.wired
     case 'claudemd': return !!cmd.exists
     case 'browser': return !!cdp.up
-    case 'gwx': return !!(gwx.installed && (gwx.accounts || []).length)
+    case 'gwx': return !!(gwx.installed && (gwx.authed || []).length)
     default: return false
   }
 }
@@ -58,6 +58,15 @@ const INSTALL_ACTIONS = {
   gwx: ['install-gwx'],
 }
 
+// action id → short label for the hero install console
+const ACTION_LABEL = {
+  'install-statusbar': 'the Status Bar',
+  'install-global-claudemd': 'CLAUDE.md',
+  'install-browser-harness': 'browser-harness',
+  'install-horse-browser': 'horse-browser',
+  'install-gwx': 'gwx',
+}
+
 const Overflow = ({ n }) => n > 0 ? <span className="cl-mono text-[11px] text-[#141413]/45 dark:text-zinc-500">+{n}</span> : null
 
 // the explicit, labelled readout for each system — easy to follow, with long
@@ -68,7 +77,7 @@ function SystemData({ slug, snap, teaser }) {
   const todo = <span className="text-[#141413]/60 dark:text-zinc-400">{teaser} <span className="font-medium text-[#c15f3c]">Set it up →</span></span>
 
   if (slug === 'codes') {
-    const running = sess.running || []
+    const running = (sess.running || []).slice().sort((a, b) => (a.callsign || '').localeCompare(b.callsign || ''))
     if (!running.length) return <span className="text-[#141413]/60 dark:text-zinc-400">No sessions open right now.</span>
     const working = running.filter((s) => s.active).length
     const show = running.slice(0, 6), rest = running.length - show.length
@@ -106,13 +115,13 @@ function SystemData({ slug, snap, teaser }) {
     )
   }
   if (slug === 'gwx') {
-    const accts = gwx.accounts || []
+    const accts = gwx.accounts || [], authed = new Set(gwx.authed || [])
     if (!gwx.installed || !accts.length) return todo
     const show = accts.slice(0, 4), rest = accts.length - show.length
     return (
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-        <span className="font-medium text-[#141413] dark:text-zinc-50">{accts.length} configured Google {accts.length === 1 ? 'account' : 'accounts'}:</span>
-        {show.map((a, i) => <span key={a} className="inline-flex items-center gap-1 rounded-md border border-[#141413]/10 bg-white/60 px-1.5 py-0.5 text-[11px] dark:border-white/10 dark:bg-white/[0.05]"><span className="size-1.5 rounded-full" style={{ background: CODE_COLORS[CODE_ORDER[i % 8]] }} />{a}</span>)}
+        <span className="font-medium text-[#141413] dark:text-zinc-50">{accts.length} Google {accts.length === 1 ? 'account' : 'accounts'} · {authed.size} signed in:</span>
+        {show.map((a, i) => { const ok = authed.has(a); return <span key={a} title={ok ? 'signed in' : 'not signed in — run gwx login'} className={cn('inline-flex items-center gap-1 rounded-md border border-[#141413]/10 bg-white/60 px-1.5 py-0.5 text-[11px] dark:border-white/10 dark:bg-white/[0.05]', !ok && 'opacity-40')}><span className="size-1.5 rounded-full" style={{ background: ACCOUNT_COLORS[i % 8] }} />{a}</span> })}
         <Overflow n={rest} />
       </div>
     )
@@ -120,10 +129,10 @@ function SystemData({ slug, snap, teaser }) {
   return todo
 }
 
-function SystemCard({ c, snap, onJump, actions }) {
+function SystemCard({ c, snap, onJump, actions, onInstall }) {
   const on = systemOn(c.slug, snap)
   const acts = INSTALL_ACTIONS[c.slug]
-  const byId = actions?.byId, run = actions?.run
+  const byId = actions?.byId
   const running = acts ? acts.some((a) => byId?.[a]?.status === 'running') : false
   const done = acts ? acts.length > 0 && acts.every((a) => byId?.[a]?.status === 'done') : false
   return (
@@ -132,7 +141,7 @@ function SystemCard({ c, snap, onJump, actions }) {
         <SystemIcon icon={c.icon} color={c.color} size={34} />
         <button onClick={() => onJump(c.slug)} className="min-w-0 flex-1 truncate text-left text-[14.5px] font-semibold text-[#141413] dark:text-zinc-50">{c.title}</button>
         {!on && acts ? (
-          <button onClick={() => acts.forEach((a) => run && run(a, { confirm: true }))} disabled={running} className="shrink-0 rounded-full bg-[#d97757] px-3 py-1 text-[11.5px] font-semibold text-white shadow-sm transition hover:bg-[#c15f3c] disabled:opacity-70">{running ? 'Installing…' : done ? '✓ Installed' : 'Install'}</button>
+          <button onClick={() => onInstall(acts)} disabled={running} className="shrink-0 rounded-full bg-[#d97757] px-3 py-1 text-[11.5px] font-semibold text-white shadow-sm transition hover:bg-[#c15f3c] disabled:opacity-70">{running ? 'Installing…' : done ? '✓ Installed' : 'Install'}</button>
         ) : (
           <button onClick={() => onJump(c.slug)} className="shrink-0"><Icon name="arrow-right" size={14} className="text-[#141413]/25 transition group-hover:translate-x-0.5 group-hover:text-[#141413]/55 dark:text-zinc-600 dark:group-hover:text-zinc-400" /></button>
         )}
@@ -148,10 +157,25 @@ function SystemCard({ c, snap, onJump, actions }) {
 /* ── full-height hero — Claude's warm identity over the dock base ───────────── */
 function Hero({ snap, onJump, actions }) {
   const byId = actions?.byId, run = actions?.run
+  const [consoleActs, setConsoleActs] = useState([])
+  const consoleRef = useRef(null)
+  // run install actions AND surface their logs in the hero's own console (not just the chapters)
+  const heroInstall = (ids) => {
+    if (!ids || !ids.length) return
+    setConsoleActs((prev) => [...new Set([...prev, ...ids])])
+    ids.forEach((a) => run && run(a, { confirm: true }))
+  }
+  useEffect(() => { if (consoleActs.length && consoleRef.current) consoleRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, [consoleActs.length])
   const installable = CHAPTERS.filter((c) => INSTALL_ACTIONS[c.slug] && !systemOn(c.slug, snap))
   const allActs = installable.flatMap((c) => INSTALL_ACTIONS[c.slug])
   const installingAll = allActs.some((a) => byId?.[a]?.status === 'running')
-  const installAll = () => allActs.forEach((a) => run && run(a, { confirm: true }))
+  // one merged console for everything kicked off from up here, each line tagged by system
+  const heroEntry = consoleActs.length ? {
+    status: consoleActs.some((a) => byId?.[a]?.status === 'running') ? 'running'
+          : consoleActs.some((a) => byId?.[a]?.status === 'failed') ? 'failed'
+          : consoleActs.every((a) => byId?.[a]?.status === 'done') ? 'done' : 'running',
+    logs: consoleActs.flatMap((a) => (byId?.[a]?.logs || []).map((l) => ({ stream: l.stream, line: consoleActs.length > 1 ? `${ACTION_LABEL[a] || a} · ${l.line}` : l.line }))),
+  } : null
   return (
     <header className="relative isolate -mx-6 -mt-6 mb-12 flex min-h-[100svh] flex-col overflow-hidden bg-[#faf9f5] text-[#141413] lg:-mx-10 lg:-mt-10 dark:bg-[#14100c] dark:text-zinc-50">
       {/* warm coral wash — Claude's atmosphere, very soft */}
@@ -184,10 +208,10 @@ function Hero({ snap, onJump, actions }) {
               <span className="cl-mono inline-flex items-center gap-1.5 text-[11px] text-[#141413]/45 dark:text-zinc-500"><span className={cn('size-1.5 rounded-full', snap?.cdp?.up ? 'bg-emerald-500' : 'bg-zinc-300')} /> live on your machine</span>
             </div>
             <div className="space-y-2">
-              {CHAPTERS.map((c) => <SystemCard key={c.slug} c={c} snap={snap} onJump={onJump} actions={actions} />)}
+              {CHAPTERS.map((c) => <SystemCard key={c.slug} c={c} snap={snap} onJump={onJump} actions={actions} onInstall={heroInstall} />)}
             </div>
             {installable.length > 0 && (
-              <button onClick={installAll} disabled={installingAll} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#d97757] px-4 py-3 text-[14px] font-semibold text-white shadow-[0_10px_24px_-10px_rgba(217,119,87,0.6)] transition hover:bg-[#c15f3c] disabled:opacity-70">
+              <button onClick={() => heroInstall(allActs)} disabled={installingAll} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#d97757] px-4 py-3 text-[14px] font-semibold text-white shadow-[0_10px_24px_-10px_rgba(217,119,87,0.6)] transition hover:bg-[#c15f3c] disabled:opacity-70">
                 <Icon name="sparkles" size={16} /> {installingAll ? 'Installing everything…' : `Install all ${installable.length} systems`}
               </button>
             )}
@@ -195,7 +219,13 @@ function Hero({ snap, onJump, actions }) {
         </div>
       </div>
 
-      <button onClick={() => onJump('codes')} className="relative mx-auto mb-7 flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-[#141413]/45 transition hover:text-[#141413] dark:text-zinc-500 dark:hover:text-zinc-50">scroll to begin <Icon name="chevron-down" size={16} /></button>
+      {heroEntry ? (
+        <div ref={consoleRef} className="mx-auto mb-7 w-full max-w-2xl px-6 lg:px-10">
+          <ActionConsole entry={heroEntry} title={consoleActs.length > 1 ? `installing ${consoleActs.length} systems` : `installing ${ACTION_LABEL[consoleActs[0]] || consoleActs[0]}`} />
+        </div>
+      ) : (
+        <button onClick={() => onJump('codes')} className="relative mx-auto mb-7 flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-[#141413]/45 transition hover:text-[#141413] dark:text-zinc-500 dark:hover:text-zinc-50">scroll to begin <Icon name="chevron-down" size={16} /></button>
+      )}
     </header>
   )
 }
@@ -284,7 +314,7 @@ export default function Module() {
     harness: { ...(snap.harness || {}), installed: inst, sessions: inst ? (snap.harness?.sessions || 3) : 0, daemons: inst ? (snap.harness?.daemons || []) : [] },
     tools: Object.fromEntries(Object.entries(snap.tools || {}).map(([k, v]) => [k, { ...v, installed: inst }])),
     cdp: inst ? (snap.cdp?.up ? snap.cdp : { ...blankCdp, up: true, browser: snap.cdp?.browser || 'Chrome/150.0.0.0' }) : blankCdp,
-    gwx: inst ? (snap.gwx?.accounts?.length ? snap.gwx : { installed: true, accounts: ['work', 'personal'] }) : { installed: false, accounts: [] },
+    gwx: inst ? (snap.gwx?.accounts?.length ? snap.gwx : { installed: true, accounts: ['work', 'personal'], authed: ['work', 'personal'] }) : { installed: false, accounts: [], authed: [] },
     sessions: inst ? snap.sessions : { running: [], runningCount: 0, active: 0, total: 0, top: [] },
   }
 

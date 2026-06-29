@@ -82,6 +82,8 @@ export default function ClaudeMd({ self, snap, actions, accent, icon, n }) {
   const g = snap?.claudemd?.global || {}
   const { byId, run } = actions || {}
   const entry = (byId && byId['install-global-claudemd']) || {}
+  const cfg = snap?.versions?.['browser-config']
+  const cfgEntry = (byId && byId['install-browser-config']) || {}
   const [skill, setSkill] = useState(null)
   const [openModal, setOpenModal] = useState(false)
 
@@ -175,6 +177,24 @@ export default function ClaudeMd({ self, snap, actions, accent, icon, n }) {
             {g.hasOurs && <div className="mt-4 flex items-center gap-2 text-[13px] font-semibold text-emerald-600 dark:text-emerald-400"><Icon name="check" size={15} /> All set — the four rules are in your notes.</div>}
             <p className="mt-3 text-[11.5px] leading-relaxed text-zinc-400 dark:text-zinc-500">Installing appends the whole block to the file — your other sections are kept, and a backup is saved first.</p>
             <ActionConsole entry={entry} title="adding the rules to your CLAUDE.md" />
+
+            {/* horse-browser also keeps a block here — the @-import of its browser playbooks (chapter 3) */}
+            {cfg && (
+              <div className="mt-5 border-t border-zinc-950/[0.07] pt-4 dark:border-white/10">
+                <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium">
+                  <span className={cn('inline-block size-2.5 shrink-0 rounded-full', cfg.upToDate ? 'bg-emerald-500' : cfg.scriptAvailable ? 'bg-amber-400' : 'bg-zinc-300 dark:bg-white/20')} />
+                  <span className="text-zinc-700 dark:text-zinc-200">The Horse Browser playbooks</span>
+                  {cfg.upToDate ? <span className="text-emerald-600 dark:text-emerald-400">— imported &amp; up to date</span>
+                    : cfg.scriptAvailable ? <span className="text-zinc-600 dark:text-zinc-300">— not imported yet</span>
+                    : <span className="text-zinc-400 dark:text-zinc-500">— install horse-browser first (chapter 3)</span>}
+                </div>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-400 dark:text-zinc-500">horse-browser adds an <code className="cl-mono">@</code>-import of its browser playbooks to this file, so agents know how to drive it. Its <code className="cl-mono">claude-md.sh</code> keeps that import aimed at the current skill — so the path can’t rot.</p>
+                {cfg.scriptAvailable && cfg.upToDate === false && (
+                  <div className="mt-3"><button onClick={() => run && run('install-browser-config', { confirm: true })} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: accent }}><Icon name="plus" size={13} /> Import the browser playbooks</button></div>
+                )}
+                <ActionConsole entry={cfgEntry} title="importing the browser playbooks" />
+              </div>
+            )}
           </Card>
         </div>
       </Reveal>

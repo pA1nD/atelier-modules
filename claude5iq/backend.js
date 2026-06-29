@@ -96,16 +96,55 @@ async function cdpInfo() {
           (t) => t.type === 'page' && !String(t.url || '').startsWith('chrome://') && !String(t.url || '').startsWith('devtools://')
         )
         out.tabs = pages.length
-        out.tabSample = pages.slice(0, 12).map((t) => {
+        out.tabSample = pages.slice(0, 16).map((t) => {
           let domain = '', path = ''
           try { const u = new URL(t.url); domain = u.hostname.replace(/^www\./, ''); path = (u.pathname + u.search).replace(/\/+$/, '') } catch {}
-          return { title: String(t.title || '').slice(0, 48), domain, path: path.slice(0, 40) }
+          return { id: t.id, title: String(t.title || '').slice(0, 48), domain, path: path.slice(0, 40) }
         })
       }
     } catch {}
     out.pids = await listeningPids(9223)
   }
   return out
+}
+
+// ask the horse-browser tab-grouper extension which open tabs belong to which session group
+// (a group's title is the session's callsign). Returns a { targetId: callsign } map. Chrome's CDP
+// exposes no tab→group link, but the extension's service worker does, via self.listTabs(label).
+async function tabGroups() {
+  let ws
+  try {
+    const targets = await fetchJson(`${CDP}/json/list`, 2000)
+    const sw = (Array.isArray(targets) ? targets : []).find((t) => t.type === 'service_worker' && /chrome-extension/.test(t.url || ''))
+    if (!sw || !sw.webSocketDebuggerUrl) return {}
+    ws = new WebSocket(sw.webSocketDebuggerUrl)
+    await new Promise((res, rej) => { ws.addEventListener('open', res); ws.addEventListener('error', () => rej(new Error('ws'))); setTimeout(() => rej(new Error('timeout')), 2000) })
+    let mid = 0
+    const send = (method, params) => new Promise((res, rej) => {
+      const id = ++mid, to = setTimeout(() => rej(new Error('eval timeout')), 2500)
+      const handler = (e) => { let m; try { m = JSON.parse(e.data) } catch { return } if (m.id === id) { clearTimeout(to); ws.removeEventListener('message', handler); res(m) } }
+      ws.addEventListener('message', handler)
+      ws.send(JSON.stringify({ id, method, params }))
+    })
+    // group titles look like "🥕 AE14" — the last 4 chars are the session callsign. Map each group's
+    // tabs to their CDP target id via chrome.debugger.getTargets (tabId → target), like the 003 module;
+    // self.listTabs's exact-title match misses the emoji-prefixed title.
+    const expr = `(async () => {
+      const dbg = await chrome.debugger.getTargets()
+      const tgt = {}; for (const d of dbg) if (d.tabId) tgt[d.tabId] = d.id
+      const groups = await chrome.tabGroups.query({})
+      const out = {}
+      for (const g of groups) {
+        const cs = (g.title || '').trim().slice(-4).toUpperCase()
+        const tabs = await chrome.tabs.query({ groupId: g.id })
+        for (const t of tabs) { const id = tgt[t.id]; if (id) out[id] = cs }
+      }
+      return out
+    })()`
+    const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
+    return (r.result && r.result.result && r.result.result.value) || {}
+  } catch { return {} }
+  finally { try { ws && ws.close() } catch {} }
 }
 
 async function listeningPids(port) {
@@ -225,23 +264,27 @@ function gwxInfo() {
   const bin = findOnPath('gwx'), gws = findOnPath('gws')
   let accounts = []
   try { accounts = fs.readFileSync(GWX_ACCOUNTS, 'utf8').split('\n').map((s) => s.trim()).filter((s) => s && !s.startsWith('#')) } catch {}
-  return { installed: !!bin, bin, gwsInstalled: !!gws, accounts }
+  // "logged in" = the account has stored OAuth credentials locally (gwx logout clears credentials.enc)
+  const accountsDir = path.join(path.dirname(GWX_ACCOUNTS), 'accounts')
+  const authed = accounts.filter((a) => { try { return fs.existsSync(path.join(accountsDir, a, 'credentials.enc')) } catch { return false } })
+  return { installed: !!bin, bin, gwsInstalled: !!gws, accounts, authed }
 }
 
 // browser-harness: installed? + how many live harness daemons (≈ agent sessions
 // connected to the browser; each BU_NAME gets its own persistent daemon).
 async function harnessInfo() {
-  // daemons are persistent, keyed by BU_NAME ("lane") — not by Claude session, so we surface the lane.
+  // each daemon's BU_NAME is `cc-<session id>`, so its last 4 chars are the agent's callsign —
+  // that's how we name-match a daemon back to the agent session that started it.
   let pids = []
   try { const { stdout } = await execFileP('pgrep', ['-f', 'browser_harness.daemon'], { timeout: 2500 }); pids = stdout.split('\n').map((s) => Number(s.trim())).filter(Boolean) } catch {}
-  const daemons = pids.map((pid) => ({ pid, name: null }))
+  const daemons = pids.map((pid) => ({ pid, name: null, callsign: null }))
   if (pids.length) {
     try {
       const { stdout } = await execFileP('ps', ['eww', '-p', pids.join(',')], { timeout: 3000 })
       for (const line of stdout.split('\n')) {
         const pid = Number((line.trim().match(/^\d+/) || [])[0]); if (!pid) continue
         const m = line.match(/\bBU_NAME=(\S+)/), d = daemons.find((x) => x.pid === pid)
-        if (d && m) d.name = m[1]
+        if (d && m) { d.name = m[1]; d.callsign = m[1].slice(-4).toUpperCase() }
       }
     } catch {}
   }
@@ -261,6 +304,58 @@ async function latestChromeVersion() { const d = await fetchJson('https://google
 async function harnessVersion() {
   const bin = findOnPath('browser-harness'); if (!bin) return null
   try { const { stdout } = await execFileP(bin, ['--version'], { timeout: 3000 }); return (stdout.match(/\d+\.\d+\.\d+/) || [stdout.trim().split('\n')[0]])[0] || null } catch { return null }
+}
+async function binVersion(name) {
+  const bin = findOnPath(name); if (!bin) return null
+  try { const { stdout } = await execFileP(bin, ['--version'], { timeout: 3000 }); return (stdout.match(/\d+\.\d+(?:\.\d+)?/) || [])[0] || null } catch { return null }
+}
+async function latestNpmVersion(pkg) { const d = await fetchJson('https://registry.npmjs.org/' + encodeURIComponent(pkg) + '/latest'); return (d && d.version) || null }
+
+// horse-browser ships claude-md.sh, which installs/refreshes the browser-playbook @-import in
+// ~/.claude/CLAUDE.md. Resolve it from the launcher symlink on PATH (so it works wherever the repo
+// lives), falling back to the module's own clone at ~/horse-browser.
+function hbClaudeMdScript() {
+  const tries = []
+  try { const l = findOnPath('horse-browser'); if (l) tries.push(path.join(path.dirname(path.dirname(fs.realpathSync(l))), 'claude-md.sh')) } catch {}
+  tries.push(path.join(HOME, 'horse-browser', 'claude-md.sh'))
+  return tries.find((p) => { try { return fs.existsSync(p) } catch { return false } }) || null
+}
+async function browserConfigInfo() {
+  const script = hbClaudeMdScript()
+  if (!script) return { scriptAvailable: false, upToDate: null }
+  // `claude-md.sh check` exits 0 when the import block + symlink are current, non-zero when drifted.
+  try { await execFileP('bash', [script, 'check'], { timeout: 5000 }); return { scriptAvailable: true, upToDate: true } }
+  catch { return { scriptAvailable: true, upToDate: false } }
+}
+
+// version status for every tool the module installs — installed vs upstream, and whether a clean
+// update is available. We only ever update by re-running the install (git / uv / npm / official
+// installer), never by reusing a kept copy — so `action` is always a clean fresh pull.
+async function computeVersions() {
+  const [bh, bhL, gwxV, gwsV, gwsL, jqV, cfg] = await Promise.all([
+    binVersion('browser-harness'), latestHarnessVersion().catch(() => null),
+    binVersion('gwx'), binVersion('gws'), latestNpmVersion('@googleworkspace/cli').catch(() => null), binVersion('jq'),
+    browserConfigInfo().catch(() => ({ scriptAvailable: false, upToDate: null })),
+  ])
+  return {
+    'browser-harness': { installed: !!findOnPath('browser-harness'), version: bh, latest: bhL, upToDate: verGE(bh, bhL), action: 'install-browser-harness', via: 'git · uv tool' },
+    'horse-browser':   { installed: !!findOnPath('horse-browser'), version: null, latest: null, upToDate: null, action: 'install-horse-browser', via: 'git clone' },
+    'browser-config':  { scriptAvailable: cfg.scriptAvailable, installed: cfg.scriptAvailable && cfg.upToDate === true, upToDate: cfg.upToDate, action: 'install-browser-config', via: 'claude-md.sh' },
+    'gwx':             { installed: !!findOnPath('gwx'), version: gwxV, latest: null, upToDate: null, action: 'install-gwx', via: 'official installer' },
+    'gws':             { installed: !!findOnPath('gws'), version: gwsV, latest: gwsL, upToDate: verGE(gwsV, gwsL), action: 'install-gwx', via: 'npm · via gwx' },
+    'jq':              { installed: !!findOnPath('jq'), version: jqV, latest: null, upToDate: null, via: 'brew' },
+  }
+}
+// non-blocking cache: serve the last result, refresh in the background when stale — the frequent
+// snapshot poll must never wait on subprocesses + network. verBust() forces a refresh after installs.
+let _verVal = null, _verAt = 0, _verBusy = false
+function verBust() { _verAt = 0 }
+async function softwareVersions() {
+  if ((!_verVal || Date.now() - _verAt > 90000) && !_verBusy) {
+    _verBusy = true
+    Promise.resolve().then(computeVersions).then((v) => { _verVal = v; _verAt = Date.now() }).catch(() => {}).finally(() => { _verBusy = false })
+  }
+  return _verVal
 }
 
 const TOOLS = [
@@ -302,6 +397,7 @@ async function snapshot(ctx) {
     gwx: gwxInfo(),
     statusline: statuslineInfo(),
     claudemd: { global: claudeMdInfo(GLOBAL_CLAUDE_MD), local: claudeMdInfo(localClaudeMd(ctx)) },
+    versions: await softwareVersions(),
   }
 }
 
@@ -388,6 +484,7 @@ const ACTIONS = {
   'install-global-claudemd': { danger: 'destructive', label: 'Install global CLAUDE.md' },
   'install-browser-harness': { danger: 'network',     label: 'Install browser-harness' },
   'install-horse-browser':   { danger: 'network',     label: 'Install horse-browser' },
+  'install-browser-config':  { danger: 'destructive', label: 'Install CLAUDE.md browser config' },
 }
 
 function nowStamp() { return new Date().toISOString().replace('T', ' ').slice(0, 19) }
@@ -462,10 +559,11 @@ export default {
       const resumeIds = new Set()
       for (const p of claudeProcs) { const m = UUID_RE.exec(p.cmd || ''); if (m) resumeIds.add(m[1]) }
       const sessions = listSessions({ withDetail: true }).filter((s) => s.age <= RUNNING_MS || resumeIds.has(s.id)).slice(0, 12)
-      const [hv, latestH, latestC] = await Promise.all([
+      const [hv, latestH, latestC, tabMap] = await Promise.all([
         cachedLatest('hv', harnessVersion, 3 * 60 * 1000),
         cachedLatest('latestH', latestHarnessVersion),
         cachedLatest('latestC', latestChromeVersion),
+        cdp.up ? tabGroups() : Promise.resolve({}),
       ])
       const chromeVer = cdp.browser ? cdp.browser.replace(/^Chrome\//, '') : null
       res.json({
@@ -473,7 +571,7 @@ export default {
         harness: { running: harness.daemons.length > 0, count: harness.daemons.length, daemons: harness.daemons.slice(0, 16), version: hv, latest: latestH, upToDate: verGE(hv, latestH) },
         chrome: { running: cdp.up, version: chromeVer, pid: cdp.pids[0] || null, latest: latestC, upToDate: verGE(chromeVer, latestC) },
         sessions: sessions.map((s) => ({ emoji: s.emoji, callsign: s.callsign, color: s.color, cwd: s.cwd, active: s.active })),
-        tabs: cdp.tabSample.map((t) => ({ title: t.title, domain: t.domain, agent: t.title.startsWith('🐴') || t.title.startsWith('🐎') })),
+        tabs: cdp.tabSample.map((t) => ({ title: t.title, domain: t.domain, agent: t.title.startsWith('🐴') || t.title.startsWith('🐎'), callsign: tabMap[t.id] || null })),
       })
     })
 
@@ -565,7 +663,7 @@ export default {
           if (uv) r = await runQuiet(id, uv, ['tool', 'install', '--force', 'git+https://github.com/browser-use/browser-harness'])
           else if (pipx) r = await runQuiet(id, pipx, ['install', '--force', 'git+https://github.com/browser-use/browser-harness'])
           else { emit(id, 'need uv (or pipx) to install — get uv at https://astral.sh/uv', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
-          slot.verCache = {}
+          slot.verCache = {}; verBust()
           emit(id, r.ok ? '✓ browser-harness installed from GitHub' : `✗ install failed (exit ${r.code})`, r.ok ? 'ok' : 'stderr')
           done(id, { ok: r.ok }); ctx.broadcast({ type: 'snapshot-dirty' })
           return res.json({ ok: r.ok })
@@ -573,17 +671,37 @@ export default {
         case 'install-horse-browser': {
           if (!findOnPath('git')) { emit(id, 'git not found on PATH', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
           const dir = path.join(HOME, 'horse-browser')
-          if (!fs.existsSync(dir)) {
-            const r1 = await runQuiet(id, 'git', ['clone', '--depth', '1', 'https://github.com/pA1nD/horse-browser.git', dir])
-            if (!r1.ok) { emit(id, `✗ clone failed (exit ${r1.code})`, 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
-          } else emit(id, `using existing checkout at ${dir.replace(HOME, '~')}`, 'stdout')
+          // Always start from a clean clone. Reusing a stale/partial checkout from a
+          // failed run is exactly what makes the retry fail — so remove it first.
+          if (fs.existsSync(dir)) { emit(id, `removing previous checkout at ${dir.replace(HOME, '~')} for a clean install`, 'stdout'); try { fs.rmSync(dir, { recursive: true, force: true }) } catch (e) { emit(id, `could not remove ${dir}: ${e.message}`, 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) } }
+          const r1 = await runQuiet(id, 'git', ['clone', '--depth', '1', 'https://github.com/pA1nD/horse-browser.git', dir])
+          if (!r1.ok) { emit(id, `✗ clone failed (exit ${r1.code})`, 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
           const installer = path.join(dir, 'install.sh')
           if (!fs.existsSync(installer)) { emit(id, 'install.sh not found in the repo', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
           const r2 = await runQuiet(id, 'bash', [installer], { cwd: dir })
-          slot.verCache = {}
           emit(id, r2.ok ? '✓ horse-browser installed' : `✗ install.sh failed (exit ${r2.code})`, r2.ok ? 'ok' : 'stderr')
+          // also import the browser playbooks into ~/.claude/CLAUDE.md (idempotent, backs up) — the
+          // config that lets agents actually drive it. claude-md.sh ships in the repo we just cloned.
+          if (r2.ok) {
+            const cmScript = path.join(dir, 'claude-md.sh')
+            if (fs.existsSync(cmScript)) {
+              emit(id, 'importing the browser playbooks into ~/.claude/CLAUDE.md…', 'stdout')
+              const r3 = await runQuiet(id, 'bash', [cmScript, 'apply'])
+              emit(id, r3.ok ? '✓ CLAUDE.md browser config applied' : `⚠ claude-md.sh apply failed (exit ${r3.code}) — set it up from the chapter`, r3.ok ? 'ok' : 'stderr')
+            }
+          }
+          slot.verCache = {}; verBust()
           done(id, { ok: r2.ok }); ctx.broadcast({ type: 'snapshot-dirty' })
           return res.json({ ok: r2.ok })
+        }
+        case 'install-browser-config': {
+          // horse-browser's claude-md.sh writes the browser-playbook @-import into ~/.claude/CLAUDE.md
+          // (idempotent, backs up, re-points the version-agnostic symlink). `apply` = (re)install.
+          const script = hbClaudeMdScript()
+          if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first', 'stderr'); done(id, { ok: false }); ctx.broadcast({ type: 'snapshot-dirty' }); return res.json({ ok: false }) }
+          const r = await runStreaming(id, 'bash', [script, 'apply'])
+          slot.verCache = {}; verBust(); ctx.broadcast({ type: 'snapshot-dirty' })
+          return res.json(r)
         }
         case 'gwx-whoami': {
           const bin = findOnPath('gwx')
@@ -594,7 +712,7 @@ export default {
         }
         case 'install-gwx': {
           const r = await runStreaming(id, 'bash', ['-lc', 'curl -fsSL https://raw.githubusercontent.com/pA1nD/gwx/main/install.sh | bash'])
-          ctx.broadcast({ type: 'snapshot-dirty' })
+          slot.verCache = {}; verBust(); ctx.broadcast({ type: 'snapshot-dirty' })
           return res.json(r)
         }
         case 'install-statusbar': {

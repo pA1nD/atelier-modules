@@ -2,7 +2,7 @@
  * Big idea → the problem made visible (diptych) → watch them all → it's running →
  * the toolkit → set it up. Same scaffold as the light chapters, dark palette. */
 
-import { Reveal, ChapterIntro, Step, Icon, ActionConsole, inkFor, cn } from '../lib.jsx'
+import { Reveal, ChapterIntro, Step, Icon, ActionConsole, VersionTag, inkFor, cn } from '../lib.jsx'
 
 const { useState, useEffect, useRef } = React
 
@@ -250,14 +250,16 @@ function FakeBrowser({ img }) {
 }
 
 // one piece of the stack in the "On your machine" card — installed, or installable from GitHub
-function ToolRow({ installed, name, desc, accent, onInstall }) {
+function ToolRow({ installed, name, desc, accent, onInstall, v, run }) {
   return (
     <div className="flex items-start gap-2.5">
       <span className={cn('mt-1.5 inline-block size-2.5 shrink-0 rounded-full', installed ? 'bg-emerald-400' : 'bg-zinc-600')} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <code className="cl-mono text-[13.5px] font-semibold text-zinc-100">{name}</code>
-          <span className={cn('text-[12px]', installed ? 'text-emerald-400' : 'text-zinc-500')}>{installed ? 'installed' : 'not installed'}</span>
+          {installed
+            ? (v ? <VersionTag v={v} run={run} dark /> : <span className="text-[12px] text-emerald-400">installed</span>)
+            : <span className="text-[12px] text-zinc-500">not installed</span>}
           {!installed && <button onClick={onInstall} className="ml-auto shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: accent }}>Install from GitHub</button>}
         </div>
         <div className="mt-0.5 text-[12px] leading-relaxed text-zinc-500">{desc}</div>
@@ -271,21 +273,6 @@ function ToolRow({ installed, name, desc, accent, onInstall }) {
 // tabs — the rows spanning all three columns (polls /processes)
 const wallDot = (ok) => ok === true ? 'bg-emerald-400' : ok === false ? 'bg-amber-400' : 'bg-zinc-600'
 
-// one column of the live stack — a status header + its own spaced list (each column is its own truth;
-// Chrome doesn't expose the tab→session group, and daemons are shared lanes, so they aren't row-joined)
-function StackCol({ title, ok, status, children }) {
-  return (
-    <div className="px-4 py-4">
-      <div className="mb-1 flex items-center gap-2">
-        <span className={cn('inline-block size-2 shrink-0 rounded-full', wallDot(ok))} />
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-300">{title}</span>
-      </div>
-      <div className="mb-4 text-[10.5px] leading-relaxed text-zinc-500">{status}</div>
-      <div className="space-y-2.5">{children}</div>
-    </div>
-  )
-}
-
 function ProcessWall({ self }) {
   const [p, setP] = useState(null)
   useEffect(() => {
@@ -296,41 +283,100 @@ function ProcessWall({ self }) {
   }, [])
   if (!p) return <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-center text-[12px] text-zinc-500">reading the live stack…</div>
   const h = p.harness, c = p.chrome
+  const sessions = [...p.sessions].sort((a, b) => (a.callsign || '').localeCompare(b.callsign || ''))   // sorted by name
+  const live = new Set(sessions.map((s) => s.callsign))
+  const unmatchedDaemons = h.daemons.filter((d) => !d.callsign || !live.has(d.callsign))
+  const looseTabs = p.tabs.filter((t) => !t.callsign || !live.has(t.callsign))
+  const cols = [
+    { ok: p.skill.installed ? true : null, title: 'Agent sessions', status: p.skill.installed ? `${sessions.length} running · sorted by name` : 'skill not installed' },
+    { ok: h.running ? (h.upToDate === false ? false : true) : null, title: 'Harness daemons', status: !h.running ? 'none' : `${h.count} running${h.upToDate === false ? ` · v${h.version} → ${h.latest}` : ''}` },
+    { ok: c.running ? (c.upToDate === false ? false : true) : null, title: 'Browser tabs', status: !c.running ? 'browser off' : `Chrome ${c.version || ''} running · :9223${c.upToDate === false ? ` · update → ${c.latest}` : c.upToDate ? ' · up to date' : ''}` },
+  ]
   return (
     <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-      <div className="grid grid-cols-3 divide-x divide-white/[0.07]">
-        <StackCol title="Agent sessions" ok={p.skill.installed ? true : null}
-          status={p.skill.installed ? 'the browser-harness skill is installed' : 'the skill is not installed'}>
-          {p.sessions.length ? p.sessions.map((s, i) => (
-            <div key={i} className="flex items-center gap-2 text-[12px]">
-              <span>{s.emoji}</span>
-              <span className="cl-mono shrink-0 font-bold" style={{ color: inkFor(s.color, true) }}>{s.callsign}</span>
-              <span className="truncate text-zinc-500">{s.cwd ? s.cwd.split('/').filter(Boolean).pop() : ''}</span>
-            </div>
-          )) : <div className="text-[11px] text-zinc-600">no agents right now</div>}
-        </StackCol>
+      {/* three column headers, each carrying its own status check */}
+      <div className="grid grid-cols-3 divide-x divide-white/[0.07] border-b border-white/[0.09]">
+        {cols.map((col) => (
+          <div key={col.title} className="px-4 pb-2.5 pt-3">
+            <div className="flex items-center gap-2"><span className={cn('size-2 shrink-0 rounded-full', wallDot(col.ok))} /><span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-300">{col.title}</span></div>
+            <div className="mt-0.5 text-[10.5px] text-zinc-500">{col.status}</div>
+          </div>
+        ))}
+      </div>
 
-        <StackCol title="Harness daemons" ok={h.running ? (h.upToDate === false ? false : true) : null}
-          status={!h.running ? 'not running' : h.upToDate === false ? `persistent lanes · update ${h.version} → ${h.latest}` : `persistent lanes · up to date (v${h.version || '?'})`}>
-          {h.daemons.length ? h.daemons.map((d) => (
-            <div key={d.pid} className="flex items-center gap-2 text-[12px] text-zinc-400">
-              <span className={cn('size-1.5 shrink-0 rounded-full', d.name ? 'bg-emerald-400/70' : 'bg-zinc-500')} />
-              <span className="cl-mono">{d.name || 'default'}</span>
-              <span className="ml-auto shrink-0 cl-mono text-[10px] text-zinc-600">#{d.pid}</span>
+      {/* one row per agent (sorted), spanning the three columns: agent · its daemon(s) · its tab(s) */}
+      <div className="divide-y divide-white/[0.05]">
+        {sessions.length ? sessions.map((s) => {
+          const ds = h.daemons.filter((d) => d.callsign === s.callsign)
+          const ts = p.tabs.filter((t) => t.callsign === s.callsign)
+          return (
+            <div key={s.id} className="grid grid-cols-3 divide-x divide-white/[0.05]">
+              <div className="flex min-w-0 items-center gap-2 px-4 py-2.5 text-[12px]">
+                <span>{s.emoji}</span>
+                <span className="cl-mono shrink-0 font-bold" style={{ color: inkFor(s.color, true) }}>{s.callsign}</span>
+                <span className="truncate text-zinc-500">{s.cwd ? s.cwd.split('/').filter(Boolean).pop() : ''}</span>
+                {s.active && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" title="working now" />}
+              </div>
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 px-4 py-2.5 text-[12px]">
+                {ds.length ? ds.map((d) => (
+                  <span key={d.pid} className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-emerald-400/80" /><span className="cl-mono text-[11px] text-zinc-300">harness #{d.pid}</span></span>
+                )) : <span className="text-[11px] text-zinc-700">—</span>}
+              </div>
+              <div className="min-w-0 px-4 py-2.5 text-[12px]">
+                {ts.length ? <div className="space-y-1">{ts.map((t, i) => (
+                  <div key={i} className="flex items-center gap-1.5"><span className="truncate text-zinc-300">{t.title.replace(/^🐴\s*/, '')}</span><span className="ml-auto shrink-0 cl-mono text-[10px] text-zinc-600">{t.domain}</span></div>
+                ))}</div> : <span className="text-[11px] text-zinc-700">—</span>}
+              </div>
             </div>
-          )) : <div className="text-[11px] text-zinc-600">no instances</div>}
-        </StackCol>
+          )
+        }) : <div className="px-4 py-6 text-center text-[12px] text-zinc-600">no agents right now</div>}
+      </div>
 
-        <StackCol title="Horse Browser tabs" ok={c.running ? (c.upToDate === false ? false : true) : null}
-          status={!c.running ? 'not running' : `${c.version || 'Chrome'}${c.pid ? ` · #${c.pid}` : ''}${c.upToDate === false ? ' · update available' : c.upToDate ? ' · up to date' : ''}`}>
-          {p.tabs.length ? p.tabs.map((t, i) => (
-            <div key={i} className="flex items-center gap-2 text-[12px]">
-              {t.agent && <span className="shrink-0">🐴</span>}
-              <span className="truncate text-zinc-300">{t.title.replace(/^🐴\s*/, '')}</span>
-              <span className="ml-auto shrink-0 cl-mono text-[10px] text-zinc-600">{t.domain}</span>
+      {/* below: not tied to a live session — laid out in the SAME three columns, so each kind sits
+          under the column it belongs to (orphaned daemons under daemons, loose tabs under tabs) */}
+      {(looseTabs.length > 0 || unmatchedDaemons.length > 0) && (
+        <div className="border-t border-white/[0.08] bg-white/[0.012]">
+          <div className="px-4 pt-2.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Not tied to a specific session</div>
+          <div className="grid grid-cols-3 divide-x divide-white/[0.05] pb-2.5 pt-1">
+            <div className="px-4 py-1.5 text-[11px] text-zinc-700">—</div>
+            <div className="min-w-0 px-4 py-1.5">
+              {unmatchedDaemons.length > 0
+                ? <div className="space-y-1">{unmatchedDaemons.map((d) => (
+                    <div key={d.pid} className="flex items-center gap-1.5 text-[12px] text-zinc-400"><span className="size-1.5 shrink-0 rounded-full bg-zinc-500" /><span className="cl-mono">{d.name || 'default'}</span><span className="ml-auto shrink-0 cl-mono text-[10px] text-zinc-600">#{d.pid}</span></div>
+                  ))}</div>
+                : <span className="text-[11px] text-zinc-700">—</span>}
             </div>
-          )) : <div className="text-[11px] text-zinc-600">no tabs open</div>}
-        </StackCol>
+            <div className="min-w-0 px-4 py-1.5">
+              {looseTabs.length > 0
+                ? <div className="space-y-1">{looseTabs.map((t, i) => (
+                    <div key={i} className="flex items-center gap-1.5 text-[12px]">{t.agent && <span className="shrink-0">🐴</span>}<span className="truncate text-zinc-400">{t.title.replace(/^🐴\s*/, '')}</span><span className="ml-auto shrink-0 cl-mono text-[10px] text-zinc-600">{t.domain}</span></div>
+                  ))}</div>
+                : <span className="text-[11px] text-zinc-700">—</span>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// the CLAUDE.md browser config (horse-browser's claude-md.sh) — not a binary install, so its own row:
+// scriptAvailable = the repo (with the script) is present; upToDate = the @-import block is current.
+function ConfigRow({ cfg, accent, run }) {
+  const ok = cfg?.scriptAvailable && cfg?.upToDate === true
+  const needs = cfg?.scriptAvailable && cfg?.upToDate === false
+  return (
+    <div className="flex items-start gap-2.5">
+      <span className={cn('mt-1.5 inline-block size-2.5 shrink-0 rounded-full', ok ? 'bg-emerald-400' : needs ? 'bg-amber-400' : 'bg-zinc-600')} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <code className="cl-mono text-[13.5px] font-semibold text-zinc-100">CLAUDE.md config</code>
+          {ok && <span className="text-[12px] text-emerald-400">up to date</span>}
+          {needs && <span className="text-[12px] text-amber-400">needs setup</span>}
+          {!cfg?.scriptAvailable && <span className="text-[12px] text-zinc-500">install horse-browser first</span>}
+          {needs && <button onClick={() => run && run('install-browser-config', { confirm: true })} className="ml-auto shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: accent }}>Set up</button>}
+        </div>
+        <div className="mt-0.5 text-[12px] leading-relaxed text-zinc-500">imports the browser playbooks into <code className="cl-mono">~/.claude/CLAUDE.md</code> so agents know how to drive it — kept aimed at the current skill by a symlink, so the path can’t rot.</div>
       </div>
     </div>
   )
@@ -408,12 +454,13 @@ export default function Browser({ self, snap, actions, accent, icon, n }) {
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
             <div className="mb-3.5 text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">On your machine</div>
             <div className="space-y-3.5">
-              <ToolRow installed={harness.installed} name="browser-harness" accent={accent}
+              <ToolRow installed={harness.installed} name="browser-harness" accent={accent} v={(snap?.versions || {})['browser-harness']} run={run}
                 desc="the engine — drives the browser straight from raw CDP."
                 onInstall={() => run && run('install-browser-harness', { confirm: true })} />
-              <ToolRow installed={horseInstalled} name="horse-browser" accent={accent}
+              <ToolRow installed={horseInstalled} name="horse-browser" accent={accent} v={(snap?.versions || {})['horse-browser']} run={run}
                 desc="the dedicated Chrome your agents share — cloned and built from GitHub."
                 onInstall={() => run && run('install-horse-browser', { confirm: true })} />
+              <ConfigRow cfg={(snap?.versions || {})['browser-config']} accent={accent} run={run} />
             </div>
             {harness.installed && (
               <div className="mt-3.5 flex items-center gap-2 rounded-lg bg-white/[0.04] px-3 py-2 text-[12.5px] text-zinc-300">
@@ -425,6 +472,7 @@ export default function Browser({ self, snap, actions, accent, icon, n }) {
             )}
             <ActionConsole entry={(byId && byId['install-browser-harness']) || {}} title="installing browser-harness" />
             <ActionConsole entry={(byId && byId['install-horse-browser']) || {}} title="installing horse-browser" />
+            <ActionConsole entry={(byId && byId['install-browser-config']) || {}} title="setting up the CLAUDE.md config" />
           </div>
         </div>
       </Reveal>

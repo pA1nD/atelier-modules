@@ -1,7 +1,7 @@
 /* Chapter 02 — The Status Bar · told as a story (same shape as ch.01).
  * idea → with/without + what each part means (inline) → how it's wired. */
 
-import { sessionCode, Reveal, ChapterIntro, Step, Card, Icon, ActionConsole, cn, useDark, inkFor } from '../lib.jsx'
+import { sessionCode, Reveal, ChapterIntro, Step, Card, Icon, ActionConsole, VersionTag, cn, useDark, inkFor } from '../lib.jsx'
 import { TermFrame, TermBody, Cmd, Say, Tool, Res, Work, InputBox, AutoMode } from '../term.jsx'
 
 const { useState, useEffect } = React
@@ -51,12 +51,12 @@ function StatusTerminal({ accent }) {
 }
 
 // one of the two things we set up here (jq, the status bar) — distinct from a prerequisite.
-function InstallRow({ ok, title, okText, desc }) {
+function InstallRow({ ok, title, okText, desc, v }) {
   return (
     <div className="flex items-start gap-2.5">
       <span className={cn('mt-[5px] inline-block size-2.5 shrink-0 rounded-full', ok ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-white/20')} />
       <div className="min-w-0">
-        <div className="text-[13px]"><span className="font-semibold text-zinc-950 dark:text-zinc-50">{title}</span> <span className={ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-500'}>— {ok ? okText : 'not yet'}</span></div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]"><span className="font-semibold text-zinc-950 dark:text-zinc-50">{title}</span> {v && v.installed ? <VersionTag v={v} /> : <span className={ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-500'}>— {ok ? okText : 'not yet'}</span>}</div>
         <div className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">{desc}</div>
       </div>
     </div>
@@ -138,7 +138,7 @@ export default function StatusBar({ snap, accent, icon, n, actions }) {
 
             {/* the two things we set up here */}
             <div className="mt-4 space-y-3">
-              <InstallRow ok={jqOk} title="jq" okText="installed" desc="a tiny, ubiquitous JSON tool — the script uses it to read the session details (and it’s handy for any JSON work)." />
+              <InstallRow ok={jqOk} title="jq" okText="installed" v={snap?.versions?.jq} desc="a tiny, ubiquitous JSON tool — the script uses it to read the session details (and it’s handy for any JSON work)." />
               <InstallRow ok={wired} title="the status bar" okText="wired" desc="the statusLine entry in settings.json, pointing at this module’s statusline.sh." />
             </div>
 
