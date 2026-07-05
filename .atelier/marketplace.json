@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "atelier-modules",
   "name": "Atelier Modules",
   "label": "Atelier Modules",
@@ -7,29 +7,7 @@
   "apps": [
     {
       "id": "dock",
-      "version": "1.1.0",
-      "requires": [
-        {
-          "brew": [
-            "git",
-            "gh",
-            "uv"
-          ]
-        },
-        {
-          "note": "Node 24+ / npm"
-        },
-        {
-          "note": "macOS — for running Atelier as a managed background service (launchctl) and Reveal in Finder (open)"
-        },
-        {
-          "note": "GitHub CLI authenticated (`gh auth login`) — only for private marketplaces"
-        },
-        {
-          "note": "atelier-chrome installed (publishes the @atelier/kit primitives dock imports; dock pins it via meta.chrome)"
-        }
-      ],
-      "name": "Atelier",
+      "name": "atelier-modules",
       "icon": "store",
       "tagline": "The **marketplace module** — the home an Atelier user opens first: a place to",
       "category": "Other",
@@ -37,19 +15,10 @@
       "tags": [],
       "homepage": null,
       "author": null,
-      "screenshots": [],
-      "source": {
-        "tag": "v1.1.0",
-        "commit": "1ce03d5f5de78264b484404add0c725e6d7a1dee"
-      },
-      "vendoredAt": "2026-06-29T19:54:53.696Z"
+      "screenshots": []
     },
     {
       "id": "atelier-chrome",
-      "version": "1.1.0",
-      "requires": [
-        "npm"
-      ],
       "name": "atelier-chrome",
       "icon": null,
       "tagline": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
@@ -58,27 +27,10 @@
       "tags": [],
       "homepage": null,
       "author": null,
-      "screenshots": [],
-      "source": {
-        "tag": "v1.1.0",
-        "commit": "1c130963165fe922ff56c4b4d4873204ac4a97bc"
-      },
-      "vendoredAt": "2026-06-29T19:54:56.979Z"
+      "screenshots": []
     },
     {
       "id": "claude5iq",
-      "version": "1.1.0",
-      "requires": [
-        {
-          "note": "macOS"
-        },
-        {
-          "note": "Claude Code CLI (`claude`) — the deck reads ~/.claude and tracks live sessions"
-        },
-        {
-          "note": "Optional integrations the deck can install for you: horse-browser + Chrome for Testing (CDP on :9223), browser-harness, gwx/gws (Google Workspace CLI), codex, jq"
-        }
-      ],
       "name": "Claude 5IQ",
       "icon": "sparkles",
       "tagline": "The five systems that take Claude Code from clever to genuinely sharp — taught in plain language, then switched on without leaving the page.",
@@ -87,12 +39,7 @@
       "tags": [],
       "homepage": null,
       "author": null,
-      "screenshots": [],
-      "source": {
-        "tag": "v1.1.0",
-        "commit": "2f7b87bad0e1d602aa38e32e02448760db9a5d36"
-      },
-      "vendoredAt": "2026-06-29T19:55:17.657Z"
+      "screenshots": []
     }
   ],
   "icon": "blocks",
