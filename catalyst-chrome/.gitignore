@@ -1,0 +1,11 @@
+# module deps — resolved at install time via `npm ci` against package-lock.json
+node_modules/
+
+# atelier per-instance runtime state (this chrome's backend is read-only, but keep
+# the convention so nothing local-only ever ships)
+data/
+
+# os / editor cruft
+.DS_Store
+*.log
+*.swp

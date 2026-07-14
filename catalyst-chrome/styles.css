@@ -1,0 +1,195 @@
+/* Catalyst chrome — Tailwind v4 + Catalyst tokens.
+ *
+ * Loaded into <head> by the chrome's frontend.jsx (ensureChromeStyles IIFE).
+ * Catalyst's components style themselves with Tailwind utility classes
+ * directly, so this file mostly just imports Tailwind and sets the font
+ * stack. The Tailwind scanner picks up every .jsx inside this chrome
+ * dir — sidebar.jsx, navbar.jsx, dropdown.jsx, etc. — so all the catalyst
+ * utility classes get generated.
+ */
+
+@import 'tailwindcss';
+
+/* Switch dark-mode resolution from the default media query to the class
+ * `html.dark`. Lets the chrome's settings dialog drive light/dark/system
+ * manually: `system` mode JS-toggles the class based on prefers-color-
+ * scheme, while `light` and `dark` pin it. Without this @custom-variant
+ * the user can't override their OS preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', 'Consolas',
+    monospace;
+}
+
+/* Depleting countdown bar for the Option-tap "quick nav" number hints — the bar
+ * shrinks left-to-right over the window so you can see how long bare numbers
+ * stay live. Driven by an inline `animation` whose duration matches QUICKNAV_MS. */
+@keyframes atelier-deplete {
+  to { transform: scaleX(0); }
+}
+
+/* Module loader — soft staggered pulse of the atelier mark's four squares. */
+@keyframes atelier-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50%      { opacity: 0.9;  transform: scale(1); }
+}
+
+/* Module rail icons are lucide (stroke-based outlines), looked up from
+ * `meta.icon`. Catalyst styles every [data-slot=icon] with a solid `fill-*`
+ * utility meant for heroicons — that would flood a lucide outline solid. Render
+ * `.lucide` (the class lucide-react stamps on each icon) as intended: no fill,
+ * themed via `stroke`, mirroring catalyst's SidebarItem icon schedule (muted at
+ * rest → full-strength on hover/active/current). Unlayered, so it beats
+ * Tailwind's `utilities` layer without `!important`. Keep these zinc values in
+ * sync with the fill-* values in sidebar.jsx. */
+[data-slot='icon'].lucide { fill: none; stroke: #71717a; }            /* zinc-500 */
+.dark [data-slot='icon'].lucide { stroke: #a1a1aa; }                  /* zinc-400 */
+[data-hover] [data-slot='icon'].lucide,
+[data-active] [data-slot='icon'].lucide,
+[data-current] [data-slot='icon'].lucide { stroke: #09090b; }         /* zinc-950 */
+.dark [data-hover] [data-slot='icon'].lucide,
+.dark [data-active] [data-slot='icon'].lucide,
+.dark [data-current] [data-slot='icon'].lucide { stroke: #ffffff; }   /* white */
+
+html,
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  /* Override the shell's `index.html` inline bootstrap bg — that's a flash-
+   * preventer, but with catalyst loaded we want catalyst's surface. Light
+   * is the default to make this chrome visually distinct from atelier's
+   * gruvbox builtin; add `dark` on <html> for the dark variant. */
+  background: #f4f4f5;
+  color: #18181b;            /* zinc-900 — body text default */
+  min-height: 100svh;
+}
+
+html.dark,
+html.dark body {
+  background: #09090b;       /* zinc-950 */
+  color: #fafafa;            /* zinc-50 */
+}
+
+/* Documentation viewer prose — scoped styling for the HTML that marked()
+ * emits from the shell's docs. Tailwind's preflight strips default element
+ * styling, so the rendered markdown needs its own typographic rules. Tuned
+ * to catalyst's zinc palette; code uses the mono token. */
+.atelier-doc-prose {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  color: #3f3f46;                      /* zinc-700 */
+}
+html.dark .atelier-doc-prose { color: #d4d4d8; }   /* zinc-300 */
+
+.atelier-doc-prose :is(h1, h2, h3, h4) {
+  color: #18181b;                      /* zinc-900 */
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.75em 0 0.6em;
+}
+html.dark .atelier-doc-prose :is(h1, h2, h3, h4) { color: #fafafa; }
+.atelier-doc-prose > :first-child { margin-top: 0; }
+.atelier-doc-prose h1 { font-size: 1.875rem; letter-spacing: -0.02em; }
+.atelier-doc-prose h2 {
+  font-size: 1.375rem;
+  letter-spacing: -0.01em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid rgba(24, 24, 27, 0.08);
+}
+html.dark .atelier-doc-prose h2 { border-color: rgba(255, 255, 255, 0.1); }
+.atelier-doc-prose h3 { font-size: 1.125rem; }
+.atelier-doc-prose h4 { font-size: 1rem; }
+
+.atelier-doc-prose :is(p, ul, ol, blockquote, table, pre) { margin: 0.9em 0; }
+
+.atelier-doc-prose a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+html.dark .atelier-doc-prose a { color: #60a5fa; }
+
+.atelier-doc-prose ul { list-style: disc; padding-left: 1.5em; }
+.atelier-doc-prose ol { list-style: decimal; padding-left: 1.5em; }
+.atelier-doc-prose li { margin: 0.3em 0; }
+.atelier-doc-prose li > :is(ul, ol) { margin: 0.3em 0; }
+
+.atelier-doc-prose strong { color: #18181b; font-weight: 600; }
+html.dark .atelier-doc-prose strong { color: #fafafa; }
+
+.atelier-doc-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: rgba(24, 24, 27, 0.06);
+  padding: 0.15em 0.4em;
+  border-radius: 0.35em;
+}
+html.dark .atelier-doc-prose code { background: rgba(255, 255, 255, 0.1); }
+
+.atelier-doc-prose pre {
+  background: #18181b;
+  color: #e4e4e7;
+  font-family: var(--font-mono);
+  font-size: 0.825rem;
+  line-height: 1.6;
+  padding: 1em 1.15em;
+  border-radius: 0.6em;
+  overflow-x: auto;
+}
+html.dark .atelier-doc-prose pre {
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.atelier-doc-prose pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+  border-radius: 0;
+}
+
+.atelier-doc-prose blockquote {
+  border-left: 3px solid rgba(24, 24, 27, 0.15);
+  padding-left: 1em;
+  color: #52525b;                      /* zinc-600 */
+}
+html.dark .atelier-doc-prose blockquote {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #a1a1aa;
+}
+
+.atelier-doc-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  display: block;
+  overflow-x: auto;
+}
+.atelier-doc-prose :is(th, td) {
+  border: 1px solid rgba(24, 24, 27, 0.12);
+  padding: 0.45em 0.7em;
+  text-align: left;
+  vertical-align: top;
+}
+html.dark .atelier-doc-prose :is(th, td) { border-color: rgba(255, 255, 255, 0.12); }
+.atelier-doc-prose th {
+  background: rgba(24, 24, 27, 0.04);
+  font-weight: 600;
+  color: #18181b;
+}
+html.dark .atelier-doc-prose th { background: rgba(255, 255, 255, 0.05); color: #fafafa; }
+
+.atelier-doc-prose hr {
+  border: 0;
+  border-top: 1px solid rgba(24, 24, 27, 0.1);
+  margin: 2em 0;
+}
+html.dark .atelier-doc-prose hr { border-color: rgba(255, 255, 255, 0.1); }

@@ -1,0 +1,10 @@
+{
+  "name": "statusbar",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Session Codes + the Claude Code status bar — a name for every agent, and the terminal line that wears it.",
+  "atelier": {
+    "bins": { "jq": "brew install jq" },
+    "note": "One-click setup wires this module's statusline.sh into ~/.claude/settings.json (merged, backed up first). jq is only needed when the statusline runs; the page can install it via Homebrew on macOS."
+  }
+}

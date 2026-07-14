@@ -1,42 +1,65 @@
 {
-  "schemaVersion": 2,
   "id": "atelier-modules",
   "name": "Atelier Modules",
   "label": "Atelier Modules",
-  "description": "atelier-chrome + dock — a starter Atelier marketplace.",
+  "description": "Four apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console, CLAUDE.md, and gwx — plus catalyst-chrome, the theme they render in.",
   "apps": [
     {
-      "id": "dock",
-      "name": "atelier-modules",
-      "icon": "store",
-      "tagline": "The **marketplace module** — the home an Atelier user opens first: a place to",
-      "category": "Other",
-      "description": "The **marketplace module** — the home an Atelier user opens first: a place to",
-      "tags": [],
-      "homepage": null,
-      "author": null,
-      "screenshots": []
-    },
-    {
-      "id": "atelier-chrome",
-      "name": "atelier-chrome",
-      "icon": null,
-      "tagline": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
-      "category": "Other",
-      "description": "The default atelier **chrome** (theme) — a minimal, light-first shell whose look is",
-      "tags": [],
-      "homepage": null,
-      "author": null,
-      "screenshots": []
-    },
-    {
-      "id": "claude5iq",
-      "name": "Claude 5IQ",
-      "icon": "sparkles",
-      "tagline": "The five systems that take Claude Code from clever to genuinely sharp — taught in plain language, then switched on without leaving the page.",
+      "id": "statusbar",
+      "name": "Status Bar",
+      "icon": "terminal",
+      "tagline": "A name for every agent, and the terminal line that wears it.",
       "category": "Developer Tools",
-      "description": "**Claude 5IQ** is a guided setup for the five systems that take Claude Code from clever to genuinely sharp — each a **+1 IQ** beat, wrapped in a live deck that reports your *real* machine. It teaches every system in plain language, then lets you **turn it on without leaving the page**.\n\n**The five systems**\n\n- **Session Codes** — one session id → a callsign, emoji, and colour, computed by one hash the terminal, dashboard, and browser all agree on.\n- **The Status Bar** — the Claude Code statusline dissected segment by segment; wire it into your settings (merge, never clobber — backed up first).\n- **The Horse Browser** — a one-WebSocket CDP harness driving a dedicated Chrome that never steals focus, with a live Agent Monitor wall.\n- **gwx** — one safe CLI over every Google account; reads fan out in parallel and any multi-account write is refused.\n- **CLAUDE.md** — global vs project notes drawn as stacked paper; install the four chapters with a backup.\n\nA sticky live deck reports tools on your PATH, the browser CDP, running sessions as emoji codenames, and known gwx accounts — condensing as you scroll.",
-      "tags": [],
+      "description": "**Session Codes + the Claude Code status bar.** Every session earns a tiny identity — callsign, colour, emoji — from one hash the terminal, the dashboard, and the browser all agree on. Part 01 teaches the identity engine with a live rolling decoder and the 48-codename grid; part 02 dissects the statusline piece by piece, then wires it into `~/.claude/settings.json` with one click (merged, never clobbered — backed up first). The page honestly reports what's wired: this module's script, the same codename script from another copy, a different statusline, or nothing.",
+      "tags": ["claude-code", "terminal", "identity"],
+      "homepage": null,
+      "author": null,
+      "screenshots": []
+    },
+    {
+      "id": "horse-browser",
+      "name": "Horse Browser",
+      "icon": "compass",
+      "tagline": "Give your agents a browser of their own — logged in, and never in your way.",
+      "category": "Developer Tools",
+      "description": "**The night console.** A second browser just for agents — signed in once, quietly shared, never stealing your screen. Built on browser-harness (~600 lines of raw-CDP engine vs ~120k for Playwright — the bitter lesson of agent harnesses) and the dedicated Horse Browser, installed and updated from npm (`@pa1nd/horse-browser`). The page shows a live wall of your real stack: agent sessions, the harness daemons driving them, and the actual tabs they have open — name-matched by session codename.",
+      "tags": ["claude-code", "browser", "cdp", "agents"],
+      "homepage": null,
+      "author": null,
+      "screenshots": []
+    },
+    {
+      "id": "claude-md",
+      "name": "CLAUDE.md",
+      "icon": "layers",
+      "tagline": "A note Claude reads before it writes a line.",
+      "category": "Developer Tools",
+      "description": "**The note Claude reads first.** The four rules that went viral — Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution — with the story of where they came from, and a modal that renders the full skill. Your real `~/.claude/CLAUDE.md` is read live, chapter by chapter, with the four-rules chapter lit when present; one click appends the block (never clobbers, always backed up). Also tracks the Horse Browser playbooks import that shares the same file.",
+      "tags": ["claude-code", "config"],
+      "homepage": null,
+      "author": null,
+      "screenshots": []
+    },
+    {
+      "id": "gwx",
+      "name": "gwx",
+      "icon": "mails",
+      "tagline": "Your whole Google Workspace, in your agent's hands.",
+      "category": "Developer Tools",
+      "description": "**One multi-account command over your whole Google Workspace.** Gmail, Calendar, Drive, Docs, Sheets and more — reads fan out across every account in parallel, and a library of 96 ready-made agent skills (per-service helpers, multi-step recipes, whole personas) loads on demand, browsable in a searchable catalogue. A skill + a CLI beats an MCP: the agent gets the whole command surface, not a hand-picked menu. Installed and updated from npm (`@pa1nd/gwx`), with live per-account sign-in state.",
+      "tags": ["claude-code", "google-workspace", "cli", "agents"],
+      "homepage": null,
+      "author": null,
+      "screenshots": []
+    },
+    {
+      "id": "catalyst-chrome",
+      "name": "Catalyst Chrome",
+      "icon": "palette",
+      "tagline": "The Catalyst-based theme these modules render in.",
+      "category": "Themes",
+      "description": "The **chrome** the collection's modules pin (`meta.chrome = 'catalyst-chrome'`) — a Tailwind Catalyst-based theme that owns the rail, topbar, tokens, and dark mode, and publishes the `@atelier/kit` primitives (Button, Dialog, Table, …) companion modules import.",
+      "tags": ["chrome", "theme", "catalyst"],
       "homepage": null,
       "author": null,
       "screenshots": []
@@ -45,5 +68,5 @@
   "icon": "blocks",
   "accent": "#7c3aed",
   "publisher": "pa1nd",
-  "homepage": "https://github.com/pa1nd/atelier-modules"
+  "homepage": "https://github.com/pA1nD/atelier-modules"
 }

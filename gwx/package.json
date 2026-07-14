@@ -1,0 +1,9 @@
+{
+  "name": "gwx",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "gwx — your whole Google Workspace in your agent's hands: multi-account CLI, 96 ready-made skills, one-click npm install.",
+  "atelier": {
+    "note": "Nothing required up front — the page degrades gracefully. Its button installs @pa1nd/gwx from npm; account registry (~/.config/gwx) and the skill cache (~/.cache/gwx) are read when present."
+  }
+}

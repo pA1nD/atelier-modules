@@ -1,0 +1,9 @@
+{
+  "name": "claude-md",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "CLAUDE.md — the note Claude reads first: the four Karpathy rules, your real ~/.claude/CLAUDE.md read live, and a one-click append-with-backup install.",
+  "atelier": {
+    "note": "Reads ~/.claude/CLAUDE.md and, only with explicit confirmation, appends to it — the file is backed up first, never clobbered."
+  }
+}

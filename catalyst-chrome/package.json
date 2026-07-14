@@ -1,0 +1,14 @@
+{
+  "name": "catalyst-chrome",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "dependencies": {
+    "@headlessui/react": "^2.2.10",
+    "@heroicons/react": "^2.2.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.21.0",
+    "marked": "^18.0.4",
+    "motion": "^12.38.0"
+  }
+}

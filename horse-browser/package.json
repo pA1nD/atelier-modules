@@ -1,0 +1,9 @@
+{
+  "name": "horse-browser",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "The night console — give your agents a browser of their own: browser-harness + the dedicated Horse Browser, with a live process wall.",
+  "atelier": {
+    "note": "Nothing required up front — the page reads the machine and degrades gracefully. Its buttons install the stack: browser-harness via uv (GitHub) and @pa1nd/horse-browser via npm."
+  }
+}
