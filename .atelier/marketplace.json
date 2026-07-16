@@ -2,7 +2,7 @@
   "id": "atelier-modules",
   "name": "Atelier Modules",
   "label": "Atelier Modules",
-  "description": "Four apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console, CLAUDE.md, and gwx — plus catalyst-chrome, the theme they render in.",
+  "description": "Six apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console with its HB Auth and HB Display wings, CLAUDE.md, and gwx — plus catalyst-chrome, the theme they render in.",
   "apps": [
     {
       "id": "statusbar",
@@ -48,6 +48,30 @@
       "category": "Developer Tools",
       "description": "**One multi-account command over your whole Google Workspace.** Gmail, Calendar, Drive, Docs, Sheets and more — reads fan out across every account in parallel, and a library of 96 ready-made agent skills (per-service helpers, multi-step recipes, whole personas) loads on demand, browsable in a searchable catalogue. A skill + a CLI beats an MCP: the agent gets the whole command surface, not a hand-picked menu. Installed and updated from npm (`@pa1nd/gwx`), with live per-account sign-in state.",
       "tags": ["claude-code", "google-workspace", "cli", "agents"],
+      "homepage": null,
+      "author": null,
+      "screenshots": []
+    },
+    {
+      "id": "hb-auth",
+      "name": "HB Auth",
+      "icon": "key-round",
+      "tagline": "Credentials your agents can use but never see.",
+      "category": "Developer Tools",
+      "description": "**The credentials & login-methods manager for agents.** An account registry / recipe book over your vault, and the ENFORCED Bitwarden broker — a signed local daemon that holds the only vault session and gates every credential behind per-credential policy, an origin check read from the browser, and a native macOS approval. Secrets are typed straight into the page over CDP, so they never enter the model's context. Ships the older LastPass + SMS-2FA convention path too. macOS only; the broker compiles on first run (Swift / Xcode CLT) and the Bitwarden CLI does the vault I/O.",
+      "tags": ["claude-code", "credentials", "bitwarden", "security", "horse-browser"],
+      "homepage": null,
+      "author": null,
+      "screenshots": []
+    },
+    {
+      "id": "hb-display",
+      "name": "HB Display",
+      "icon": "monitor",
+      "tagline": "Screenshots that survive a closed lid.",
+      "category": "Developer Tools",
+      "description": "**The Horse Browser's display & health wing.** With the display asleep — especially clamshell — WindowServer composites nothing and agent screenshots hang. This page answers the headline question with a REAL probe (a timed 1×1 CDP screenshot), shows the display census (asleep / clamshell / virtual displays), installs and launches DeskPad (audited: 436 lines, sandboxed, no network entitlement) for a virtual display that never sleeps, and streams the launcher's self-heal journal live. macOS only.",
+      "tags": ["claude-code", "display", "screenshots", "deskpad", "horse-browser"],
       "homepage": null,
       "author": null,
       "screenshots": []

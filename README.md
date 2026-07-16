@@ -1,6 +1,6 @@
 # Atelier Modules
 
-The public **Atelier** collection: four small apps that set up a sharper
+The public **Atelier** collection: six small apps that set up a sharper
 Claude Code — each one teaches a system in plain language, reads your *real*
 machine live, and switches the system on without leaving the page — plus the
 chrome they render in.
@@ -11,6 +11,8 @@ chrome they render in.
 | **horse-browser** | The night console: give your agents a browser of their own — browser-harness (the ~600-line CDP engine) + the dedicated Horse Browser, installed and updated from npm (`@pa1nd/horse-browser`), with a live wall of agent sessions · harness daemons · open tabs. |
 | **claude-md** | CLAUDE.md — the note Claude reads first: the four Karpathy rules and where they came from, your real `~/.claude/CLAUDE.md` read live chapter by chapter, appended-with-backup in one click. |
 | **gwx** | Your whole Google Workspace in your agent's hands: one multi-account CLI (`@pa1nd/gwx` on npm), 96 ready-made agent skills in a searchable catalogue, and live per-account sign-in state. |
+| **hb-auth** | Credentials your agents can use but never see: an account registry over your vault plus the ENFORCED Bitwarden broker — a signed local daemon holding the only vault session, gating every credential behind per-credential policy, an origin check, and a native macOS approval; secrets are typed over CDP and never enter the model's context. macOS only. |
+| **hb-display** | Screenshots that survive a closed lid: a real compositing probe (timed 1×1 CDP capture), the display census (asleep / clamshell / virtual), one-click DeskPad install for a virtual display that never sleeps, and the launcher's self-heal journal, live. macOS only. |
 | **catalyst-chrome** | The chrome these modules pin (`meta.chrome = 'catalyst-chrome'`) — a Catalyst-based theme that publishes the `@atelier/kit` primitives and owns the rail, tokens, and dark mode. |
 
 ## Install
