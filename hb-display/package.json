@@ -1,0 +1,27 @@
+{
+  "name": "atelier-hb-display-module",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "HB Display — the Horse Browser's display & health wing: a real compositing probe (timed 1×1 CDP screenshot), the display census (asleep / clamshell / virtual displays), one-click DeskPad install & launch for lid-closed vision, and the launcher's self-heal journal, live. macOS only.",
+  "keywords": [
+    "display",
+    "deskpad",
+    "cdp",
+    "screenshots",
+    "clamshell",
+    "virtual-display",
+    "horse-browser"
+  ],
+  "author": "pa1nd",
+  "atelier": {
+    "os": [
+      "darwin"
+    ],
+    "bins": {
+      "python3": "xcode-select --install"
+    },
+    "note": "macOS only. The display census reads CoreGraphics via python3 ctypes (Xcode Command Line Tools provide python3); ioreg and pgrep ship with macOS. The compositing probe talks to any Chrome exposing CDP on 127.0.0.1:9223 (horse-browser is the usual one; override with HB_CDP_PORT) — without a browser it reports 'no-browser' instead of failing. The one-click DeskPad install uses Homebrew (brew) and degrades to showing the copyable command when brew is missing; DeskPad's first launch needs a one-time Screen Recording grant. The health journal reads ~/.config/horse-browser/heal.log when present and shows an empty state otherwise."
+  }
+}
