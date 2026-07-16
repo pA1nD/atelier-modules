@@ -1,0 +1,14 @@
+node_modules/
+.venv/
+venv/
+__pycache__/
+data/
+dist/
+build/
+.build/
+.DS_Store
+*.log
+.env
+.env.*
+*.pem
+*.key

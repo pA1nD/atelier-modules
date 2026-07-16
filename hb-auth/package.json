@@ -1,0 +1,37 @@
+{
+  "name": "atelier-hb-auth-module",
+  "version": "1.0.5",
+  "private": true,
+  "type": "module",
+  "description": "HB Auth — the credentials & login-methods manager for agents: an account registry / recipe book over the vault, LastPass + SMS methods (convention path), and the ENFORCED Bitwarden broker — a signed local daemon that holds the only vault session and gates every credential behind per-credential policy, an origin check, and a native macOS approval. Secrets never enter the model's context. macOS only.",
+  "keywords": [
+    "auth",
+    "agents",
+    "lastpass",
+    "bitwarden",
+    "broker",
+    "touch-id",
+    "totp",
+    "otp",
+    "cdp",
+    "horse-browser"
+  ],
+  "author": "pa1nd",
+  "scripts": {
+    "test": "cd native && swift run OriginCheck"
+  },
+  "atelier": {
+    "os": [
+      "darwin"
+    ],
+    "bins": {
+      "bw": "brew install bitwarden-cli",
+      "swift": "xcode-select --install",
+      "lpass": "brew install lastpass-cli"
+    },
+    "env": [
+      "SMSPOOL_API_KEY"
+    ],
+    "note": "macOS only. ENFORCED path (Bitwarden broker): needs the Bitwarden CLI (bw) + Swift / Xcode Command Line Tools to compile the signed broker daemon on first run. Run `hb-broker setup` once (shown on the Bitwarden source page): you enter your master password on stdin (never the browser), it mints a long-lived BW_SESSION token, stores ONLY that token in the login Keychain bound to the daemon's own code signature, and gates every use behind per-credential policy, an origin check read from the browser, and a native macOS approval prompt — in practice your login password, since a background LaunchAgent can't present the Touch ID sheet. The daemon installs to ~/Library/Application Support/hb-broker and runs as a per-user LaunchAgent. Convention path (optional): the LastPass CLI (lpass) + a dedicated agent account for the older LastPass/SMS recipes; SMS 2FA needs SMSPOOL_API_KEY in the instance .env. Drives any Chrome exposing CDP on 127.0.0.1:9223 (horse-browser is the usual one; override with HB_CDP_PORT), detected but installed separately. No secret lives in the module folder — passwords/TOTP stay in the vault; the session token lives only in the Keychain + broker memory."
+  }
+}
