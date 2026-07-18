@@ -192,6 +192,26 @@ export default {
     /* ── instruments ── */
     router.get('/snapshot', async (req, res) => res.json(await snapshot()))
 
+    /* ── the live push — the shell WS is the realtime channel, so the poll lives
+     *    HERE, server-side, once for all viewers: recompute every few seconds,
+     *    broadcast a full snapshot frame ONLY on change. Clients fetch once on
+     *    mount, then just listen; an idle machine sends no frames. */
+    const snapKey = (s) => JSON.stringify(({ ...s, now: 0 }))
+    const tick = async (force = false) => {
+      if (slot.watchBusy) return
+      slot.watchBusy = true
+      try {
+        const s = await snapshot()
+        const k = snapKey(s)
+        if (force || k !== slot.lastSnapKey) { slot.lastSnapKey = k; ctx.broadcast({ type: 'snapshot', snapshot: s }) }
+      } catch {}
+      finally { slot.watchBusy = false }
+    }
+    const tickNow = () => { tick(true).catch(() => {}) }
+    if (slot.watchTimer) clearInterval(slot.watchTimer)   // an async mountRoutes' teardown is dropped by the shell — never stack watchers
+    slot.watchTimer = setInterval(() => { tick().catch(() => {}) }, 5000)
+
+
     router.get('/templates/global', (req, res) => res.json({ which: 'global', text: GLOBAL_TEMPLATE }))
 
     /* ── hands ── */
@@ -211,7 +231,7 @@ export default {
         case 'install-global-claudemd': {
           // Append the Karpathy block (the whole chapter) — never clobber the rest of the file.
           const info = claudeMdInfo(GLOBAL_CLAUDE_MD)
-          if (info.hasOurs) { emit(id, 'these four rules are already in your CLAUDE.md — nothing to do', 'ok'); done(id, { ok: true }); ctx.broadcast({ type: 'snapshot-dirty' }); return res.json({ ok: true }) }
+          if (info.hasOurs) { emit(id, 'these four rules are already in your CLAUDE.md — nothing to do', 'ok'); done(id, { ok: true }); tickNow(); return res.json({ ok: true }) }
           fs.mkdirSync(path.dirname(GLOBAL_CLAUDE_MD), { recursive: true })
           let existing = ''
           try { existing = fs.readFileSync(GLOBAL_CLAUDE_MD, 'utf8') } catch {}
@@ -220,16 +240,16 @@ export default {
           fs.writeFileSync(GLOBAL_CLAUDE_MD, next)
           emit(id, `✓ added the four rules to ${GLOBAL_CLAUDE_MD.replace(HOME, '~')} @ ${nowStamp()}`, 'ok')
           done(id, { ok: true })
-          ctx.broadcast({ type: 'snapshot-dirty' })
+          tickNow()
           return res.json({ ok: true })
         }
         case 'install-browser-config': {
           // claude-md.sh writes the browser-playbook @-import into ~/.claude/CLAUDE.md
           // (idempotent, backs up, re-points the version-agnostic symlink). `apply` = (re)install.
           const script = hbClaudeMdScript()
-          if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first (the Horse Browser module)', 'stderr'); done(id, { ok: false }); ctx.broadcast({ type: 'snapshot-dirty' }); return res.json({ ok: false }) }
+          if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first (the Horse Browser module)', 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
           const r = await runStreaming(id, 'bash', [script, 'apply'])
-          cfgBust(); ctx.broadcast({ type: 'snapshot-dirty' })
+          cfgBust(); tickNow()
           return res.json(r)
         }
         default:
@@ -241,6 +261,7 @@ export default {
 
     // Teardown: kill any in-flight children on hot-reload + exit.
     return () => {
+      if (slot.watchTimer) { clearInterval(slot.watchTimer); slot.watchTimer = null }
       for (const c of slot.children) {
         try { process.kill(-c.pid, 'SIGTERM') } catch {}
         try { c.kill('SIGTERM') } catch {}

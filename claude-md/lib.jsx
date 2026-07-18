@@ -66,17 +66,18 @@ export function useDark() {
 }
 
 /* ───────────────────────── live-data hooks ───────────────────────────────── */
-export function useSnapshot(self, intervalMs = 4500) {
+// One HTTP fetch for initial state, then the shell WebSocket does the rest —
+// the backend watches its sources server-side and pushes a full snapshot frame
+// whenever anything changed. No client-side polling.
+export function useSnapshot(self) {
   const [snap, setSnap] = useState(null)
   const refresh = useCallback(() => {
     fetch(self.api + '/snapshot').then((r) => r.json()).then(setSnap).catch(() => {})
   }, [self.api])
   useEffect(() => {
     refresh()
-    const t = setInterval(refresh, intervalMs)
-    const unsub = self.subscribe((f) => { if (f.type === 'snapshot-dirty') setTimeout(refresh, 250) })
-    return () => { clearInterval(t); unsub && unsub() }
-  }, [refresh, intervalMs])
+    return self.subscribe((f) => { if (f.type === 'snapshot' && f.snapshot) setSnap(f.snapshot) })
+  }, [refresh])
   return { snap, refresh }
 }
 
