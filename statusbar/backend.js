@@ -216,6 +216,26 @@ export default {
     /* ── instruments ── */
     router.get('/snapshot', async (req, res) => res.json(await snapshot(ctx)))
 
+    /* ── the live push — the shell WS is the realtime channel, so the poll lives
+     *    HERE, server-side, once for all viewers: recompute every few seconds,
+     *    broadcast a full snapshot frame ONLY on change. Clients fetch once on
+     *    mount, then just listen; an idle machine sends no frames. */
+    const snapKey = (s) => JSON.stringify(({ ...s, now: 0, sessions: { ...s.sessions, running: (s.sessions.running || []).map(({ mtime, age, ...r }) => r) } }))
+    const tick = async (force = false) => {
+      if (slot.watchBusy) return
+      slot.watchBusy = true
+      try {
+        const s = await snapshot(ctx)
+        const k = snapKey(s)
+        if (force || k !== slot.lastSnapKey) { slot.lastSnapKey = k; ctx.broadcast({ type: 'snapshot', snapshot: s }) }
+      } catch {}
+      finally { slot.watchBusy = false }
+    }
+    const tickNow = () => { tick(true).catch(() => {}) }
+    if (slot.watchTimer) clearInterval(slot.watchTimer)   // an async mountRoutes' teardown is dropped by the shell — never stack watchers
+    slot.watchTimer = setInterval(() => { tick().catch(() => {}) }, 4000)
+
+
     /* ── hands ── */
     router.post('/action/:id', async (req, res) => {
       const id = req.params.id
@@ -233,10 +253,10 @@ export default {
         case 'install-statusbar': {
           // dependency: jq (via Homebrew). Homebrew itself is a prerequisite we don't install.
           if (!findOnPath('jq')) {
-            if (!findOnPath('brew')) { emit(id, 'Homebrew not found — install it from https://brew.sh first, then try again', 'stderr'); done(id, { ok: false }); ctx.broadcast({ type: 'snapshot-dirty' }); return res.json({ ok: false, error: 'no homebrew' }) }
+            if (!findOnPath('brew')) { emit(id, 'Homebrew not found — install it from https://brew.sh first, then try again', 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false, error: 'no homebrew' }) }
             emit(id, 'jq is missing — installing it with Homebrew…', 'stdout')
             const j = await runQuiet(id, 'brew', ['install', 'jq'])
-            if (!j.ok) { emit(id, `✗ jq install failed (exit ${j.code})`, 'stderr'); done(id, { ok: false }); ctx.broadcast({ type: 'snapshot-dirty' }); return res.json({ ok: false, error: 'jq install failed' }) }
+            if (!j.ok) { emit(id, `✗ jq install failed (exit ${j.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false, error: 'jq install failed' }) }
             emit(id, '✓ jq installed', 'ok')
           } else emit(id, 'jq already installed ✓', 'ok')
           const target = path.join(path.dirname(ctx.dataDir), 'statusline.sh')
@@ -250,7 +270,7 @@ export default {
           verBust()
           emit(id, '✓ status bar wired — open a new Claude Code session to see it', 'ok')
           done(id, { ok: true })
-          ctx.broadcast({ type: 'snapshot-dirty' })
+          tickNow()
           return res.json({ ok: true })
         }
         default:
@@ -264,6 +284,7 @@ export default {
     // Children are spawned detached (own process group) so we can take the
     // whole group down — no orphaned grandchild left behind.
     return () => {
+      if (slot.watchTimer) { clearInterval(slot.watchTimer); slot.watchTimer = null }
       for (const c of slot.children) {
         try { process.kill(-c.pid, 'SIGTERM') } catch {}
         try { c.kill('SIGTERM') } catch {}
