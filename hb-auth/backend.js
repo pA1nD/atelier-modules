@@ -1155,6 +1155,7 @@ export default {
     }
     if (smsSlot.smsTimer) { clearInterval(smsSlot.smsTimer); smsSlot.smsTimer = null }
     smsSlot.smsCache = undefined                         // re-warm on (re)mount
+    if (smsSlot.smsTimer) clearInterval(smsSlot.smsTimer)   // an async mountRoutes' teardown is dropped by the shell — never stack watchers
     if (smsKeySet()) { pollSms(); smsSlot.smsTimer = setInterval(pollSms, 12000) }
 
     // --- SMS 2FA (SMSPool) ---------------------------------------------------
@@ -1309,6 +1310,7 @@ export default {
     const brokerStatusNow = () => { brokerStatusTick(true).catch(() => {}) }
     brokerSlot.statusBusy = false          // reset transient guards on every mount —
     brokerSlot.statusForcePending = false  // a reload mid-RPC must never strand them
+    if (brokerSlot.statusTimer) clearInterval(brokerSlot.statusTimer)
     brokerSlot.statusTimer = setInterval(() => { brokerStatusTick().catch(() => {}) }, 10000)
     router.get('/broker/policy', async (_req, res) => res.json(await brokerCall({ op: 'policy_get' })))
     router.post('/broker/policy', async (req, res) => {
