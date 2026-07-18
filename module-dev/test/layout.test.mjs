@@ -56,3 +56,33 @@ test('suggestDirs: numbered siblings, installPath-independent', () => {
   assert.equal(s.modules, '/home/u/002-my-studio-modules')
   assert.equal(s.chromes, '/home/u/001-my-studio-chromes')
 })
+
+test('drift: stale detection and block refresh preserve user content', () => {
+  const d = tmp()
+  const f = path.join(d, 'CLAUDE.md')
+  const v1 = '<!-- atelier-module-dev: t v1 -->\n# Playbook for /old/path\n'
+  const v2 = '<!-- atelier-module-dev: t v1 -->\n# Playbook for /new/path\n'
+
+  // whole-file ours: v1 current → 'ours'; against v2 → 'ours-stale'; refresh overwrites
+  installClaudeMd(f, v1)
+  assert.equal(claudeMdState(f, v1), 'ours')
+  assert.equal(claudeMdState(f, v2), 'ours-stale')
+  const r = installClaudeMd(f, v2)
+  assert.equal(r.mode, 'refreshed')
+  assert.ok(fs.existsSync(r.backup))
+  assert.equal(fs.readFileSync(f, 'utf8'), v2)
+  assert.equal(installClaudeMd(f, v2).mode, 'already')
+
+  // appended-to-yours: refresh replaces only our block, user rules stay on top
+  const g = path.join(d, 'appended', 'CLAUDE.md')
+  fs.mkdirSync(path.dirname(g), { recursive: true })
+  fs.writeFileSync(g, '# My rules\n')
+  installClaudeMd(g, v1)
+  assert.equal(claudeMdState(g, v2), 'ours-stale')
+  const r2 = installClaudeMd(g, v2)
+  assert.equal(r2.mode, 'refreshed')
+  const txt = fs.readFileSync(g, 'utf8')
+  assert.ok(txt.startsWith('# My rules\n'))
+  assert.ok(txt.includes('/new/path') && !txt.includes('/old/path'))
+  assert.equal(claudeMdState(g, v2), 'ours')
+})

@@ -36,8 +36,9 @@ function useSnapshot() {
 
 /* CLAUDE.md state → an honest chip */
 function MdChip({ state }) {
-  if (state === 'ours') return <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"><Icon name="check" size={10} /> playbook installed</span>
-  if (state === 'present') return <span title="A CLAUDE.md exists that this module didn’t write — installing appends our playbook below yours, after a backup." className="inline-flex cursor-help items-center gap-1 rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400"><Icon name="check" size={10} /> CLAUDE.md (yours)</span>
+  if (state === 'ours') return <span title="Our playbook, and it matches what the module would write today — paths and template are current." className="inline-flex cursor-help items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"><Icon name="check" size={10} /> playbook installed</span>
+  if (state === 'ours-stale') return <span title="Our playbook is installed, but the instance's paths/port or the shipped template changed since. Update replaces only our block (backed up) — anything of yours above it stays." className="inline-flex cursor-help items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"><Icon name="triangle-alert" size={10} /> playbook outdated</span>
+  if (state === 'present') return <span title="A CLAUDE.md exists that this module didn’t write — it differs from the shipped playbook (compare via “view”). Append backs your file up, then adds the playbook below your rules." className="inline-flex cursor-help items-center gap-1 rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400"><Icon name="check" size={10} /> yours · differs from the playbook</span>
   return <span className="inline-flex items-center gap-1 rounded-md bg-zinc-500/15 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">no CLAUDE.md</span>
 }
 
@@ -136,12 +137,12 @@ export default function Module() {
     {
       id: 'md-instance', done: done.mdInstance, tpl: 'instance', title: 'CLAUDE.md — instance folder', state: paths.instance.claudemd,
       desc: 'The layout map + the full module playbook: the shell contract, WS streaming (no polling), render-verify, portable modules.',
-      action: paths.instance.claudemd === 'none' && <Button onClick={() => act('md-instance', '/action/claudemd', { target: 'instance' })} disabled={busy === 'md-instance'}>Install</Button>,
+      action: paths.instance.claudemd !== 'ours' && <Button onClick={() => act('md-instance', '/action/claudemd', { target: 'instance' })} disabled={busy === 'md-instance'}>{paths.instance.claudemd === 'none' ? 'Install' : paths.instance.claudemd === 'ours-stale' ? 'Update' : 'Append'}</Button>,
     },
     {
       id: 'md-chromes', done: done.mdChromes, tpl: 'chromes', title: 'CLAUDE.md — chromes folder', state: paths.chromes.claudemd,
       desc: 'Handle with care: everything here is cross-cutting, a chrome change ripples into every module at once.',
-      action: paths.chromes.claudemd === 'none' && <Button onClick={() => act('md-chromes', '/action/claudemd', { target: 'chromes' })} disabled={busy === 'md-chromes' || !paths.chromes.exists}>Install</Button>,
+      action: paths.chromes.claudemd !== 'ours' && <Button onClick={() => act('md-chromes', '/action/claudemd', { target: 'chromes' })} disabled={busy === 'md-chromes' || !paths.chromes.exists}>{paths.chromes.claudemd === 'none' ? 'Install' : paths.chromes.claudemd === 'ours-stale' ? 'Update' : 'Append'}</Button>,
     },
   ]
 
@@ -212,7 +213,7 @@ export default function Module() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[13.5px] font-semibold text-zinc-950 dark:text-white">{s.title}</span>
-                    {s.state === 'present' && <MdChip state="present" />}
+                    {(s.state === 'present' || s.state === 'ours-stale') && <MdChip state={s.state} />}
                   </div>
                   <p className="mt-0.5 text-xs leading-[1.5] text-zinc-500 dark:text-zinc-400">{s.desc}</p>
                   {s.state === 'present' && !s.done && null}
@@ -229,7 +230,7 @@ export default function Module() {
           ))}
         </div>
         <p className="mt-2 px-1 text-[11px] leading-[1.6] text-zinc-400 dark:text-zinc-500">
-          An existing CLAUDE.md is never clobbered — installing backs it up next to the file, then appends the playbook below your rules.
+          Never clobbered: an existing CLAUDE.md of yours is backed up and appended to; when paths or the template change later, the step flips to “playbook outdated” and Update replaces only our block — your own content above it stays.
         </p>
       </section>
 

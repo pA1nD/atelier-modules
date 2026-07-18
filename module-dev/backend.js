@@ -40,11 +40,19 @@ export function fillTemplate(tpl, vars) {
   return tpl.replace(/\{\{(INSTANCE|MODULES|CHROMES|PORT)\}\}/g, (_, k) => String(vars[k] ?? ''))
 }
 
-// 'ours' — our marker present · 'present' — a CLAUDE.md exists (yours) · 'none'
-export function claudeMdState(file) {
+// 'ours' — our block present and it matches what we'd write today ·
+// 'ours-stale' — our block present but the filled template drifted (the
+// instance's paths/port changed, or a newer template shipped) · 'present' —
+// a CLAUDE.md exists that isn't ours · 'none'. Our block always runs from the
+// marker line to the end of the file (we only ever write or append it there).
+export function claudeMdState(file, expected) {
   let txt = null
   try { txt = fs.readFileSync(file, 'utf8') } catch { return 'none' }
-  return txt.includes(MARKER) ? 'ours' : 'present'
+  const i = txt.indexOf(MARKER)
+  if (i === -1) return 'present'
+  if (expected == null) return 'ours'
+  const start = txt.lastIndexOf('\n', i) + 1
+  return txt.slice(start).trim() === expected.trim() ? 'ours' : 'ours-stale'
 }
 
 // Suggested default folders: numbered siblings of the instance, so they sort
@@ -56,19 +64,31 @@ export function suggestDirs(instanceRoot) {
   return { modules: path.join(parent, '002-' + base + '-modules'), chromes: path.join(parent, '001-' + base + '-chromes') }
 }
 
-// none → write · present → back up, then append our block · ours → no-op.
+// none → write · present → back up, then append our block · ours-current →
+// no-op · ours-stale → back up, then REPLACE our block (marker line → EOF)
+// with the freshly filled one — anything of yours above it stays untouched.
 export function installClaudeMd(file, content) {
-  const state = claudeMdState(file)
-  if (state === 'ours') return { mode: 'already', backup: null }
-  if (state === 'none') {
+  let txt = null
+  try { txt = fs.readFileSync(file, 'utf8') } catch {}
+  const stamp = () => file + '.bak-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  if (txt == null) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, content)
     return { mode: 'written', backup: null }
   }
-  const backup = file + '.bak-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  const i = txt.indexOf(MARKER)
+  if (i === -1) {
+    const backup = stamp()
+    fs.copyFileSync(file, backup)
+    fs.appendFileSync(file, '\n\n' + content)
+    return { mode: 'appended', backup }
+  }
+  const start = txt.lastIndexOf('\n', i) + 1
+  if (txt.slice(start).trim() === content.trim()) return { mode: 'already', backup: null }
+  const backup = stamp()
   fs.copyFileSync(file, backup)
-  fs.appendFileSync(file, '\n\n' + content)
-  return { mode: 'appended', backup }
+  fs.writeFileSync(file, txt.slice(0, start) + content)
+  return { mode: 'refreshed', backup }
 }
 
 export default {
@@ -130,15 +150,16 @@ export default {
     const snapshot = () => {
       const { cfg, modules, chromes, configured } = resolvePaths()
       const mounts = classifyMounts(cfg, modules, chromes)
-      const mdState = (dir) => claudeMdState(path.join(dir, 'CLAUDE.md'))
+      const expected = (name) => { const t = template(name); return t ? fillTemplate(t, vars(modules, chromes)) : null }
+      const mdState = (dir, name) => claudeMdState(path.join(dir, 'CLAUDE.md'), expected(name))
       const s = {
         now: Date.now(),
         instanceRoot: tilde(instanceRoot),
         port: ctx.port,
         paths: {
-          instance: { path: tilde(instanceRoot), exists: true, claudemd: mdState(instanceRoot) },
+          instance: { path: tilde(instanceRoot), exists: true, claudemd: mdState(instanceRoot, 'instance') },
           modules: { path: tilde(modules), exists: exists(modules), configured: configured.modules },   // just a container — no CLAUDE.md; work happens in its subfolders
-          chromes: { path: tilde(chromes), exists: exists(chromes), configured: configured.chromes, claudemd: exists(chromes) ? mdState(chromes) : 'none' },
+          chromes: { path: tilde(chromes), exists: exists(chromes), configured: configured.chromes, claudemd: exists(chromes) ? mdState(chromes, 'chromes') : 'none' },
         },
         migration: {
           toModules: mounts.filter((m) => m.kind === 'to-modules'),
@@ -150,8 +171,8 @@ export default {
       s.done = {
         folders: s.paths.modules.exists && s.paths.chromes.exists,
         installPath: configured.modules && configured.chromes,
-        mdInstance: s.paths.instance.claudemd !== 'none',
-        mdChromes: s.paths.chromes.claudemd !== 'none',
+        mdInstance: ['ours', 'present'].includes(s.paths.instance.claudemd),
+        mdChromes: ['ours', 'present'].includes(s.paths.chromes.claudemd),
         migration: s.migration.toModules.length + s.migration.toChromes.length === 0,
       }
       return s
