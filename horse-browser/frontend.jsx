@@ -4,7 +4,7 @@
  * browser of their own — logged in, never in your way. The page: cinematic
  * banner → the idea → the live agent-browser wall (faked, but true to life) →
  * the engine story (browser-harness, the bitter lesson) → the real install
- * card (browser-harness via uv from GitHub, horse-browser via npm) → the live
+ * card (browser-harness via uv from PyPI, horse-browser via npm) → the live
  * process wall (agents · harness daemons · actual Horse Browser tabs).
  */
 
@@ -261,36 +261,42 @@ function FakeBrowser({ img }) {
   )
 }
 
-// one piece of the stack in the "On your machine" card — installed, or installable
-function ToolRow({ installed, name, desc, accent, onInstall, installLabel = 'Install', v, run }) {
+// one piece of the stack in the "On your machine" card — installed, or installable.
+// `cmd` shows the exact install/update command in the open (the button runs it);
+// `blocked` names a missing prerequisite instead of offering a button that would fail.
+function ToolRow({ installed, name, desc, accent, onInstall, installLabel = 'Install', v, run, cmd, blocked }) {
   return (
     <div className="flex items-start gap-2.5">
-      <span className={cn('mt-1.5 inline-block size-2.5 shrink-0 rounded-full', installed ? 'bg-emerald-400' : 'bg-zinc-600')} />
+      <span className={cn('mt-1.5 inline-block size-2.5 shrink-0 rounded-full', installed ? 'bg-emerald-400' : blocked ? 'bg-amber-400' : 'bg-zinc-600')} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <code className="cl-mono text-[13.5px] font-semibold text-zinc-100">{name}</code>
           {installed
             ? (v ? <VersionTag v={v} run={run} dark /> : <span className="text-[12px] text-emerald-400">installed</span>)
             : <span className="text-[12px] text-zinc-500">not installed</span>}
-          {!installed && <button onClick={onInstall} className="ml-auto shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: accent }}>{installLabel}</button>}
+          {!installed && !blocked && <button onClick={onInstall} className="ml-auto shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: accent }}>{installLabel}</button>}
         </div>
         <div className="mt-0.5 text-[12px] leading-relaxed text-zinc-500">{desc}</div>
+        {cmd && <div className="cl-mono mt-1.5 overflow-x-auto whitespace-nowrap rounded-md bg-black/40 px-2.5 py-1.5 text-[11px] text-zinc-300"><span className="text-zinc-600">$ </span>{cmd}</div>}
+        {blocked && <div className="mt-1.5 text-[11.5px] leading-relaxed text-amber-400">{blocked}</div>}
       </div>
     </div>
   )
 }
 
 // the live stack as ONE table — agent sessions (the primary sort) · harness daemons ·
-// Horse Browser tabs — the rows spanning all three columns (polls /processes)
+// Horse Browser tabs — the rows spanning all three columns. One fetch for
+// initial state; after that the backend's watcher pushes 'processes' frames
+// over the shell WS whenever the stack actually changed.
 const wallDot = (ok) => ok === true ? 'bg-emerald-400' : ok === false ? 'bg-amber-400' : 'bg-zinc-600'
 
 function ProcessWall({ self }) {
   const [p, setP] = useState(null)
   useEffect(() => {
     let alive = true
-    const load = () => fetch(self.api + '/processes').then((r) => r.json()).then((d) => { if (alive) setP(d) }).catch(() => {})
-    load(); const id = setInterval(load, 5000)
-    return () => { alive = false; clearInterval(id) }
+    fetch(self.api + '/processes').then((r) => r.json()).then((d) => { if (alive) setP(d) }).catch(() => {})
+    const unsub = self.subscribe((f) => { if (f.type === 'processes' && f.processes) setP(f.processes) })
+    return () => { alive = false; unsub && unsub() }
   }, [])
   if (!p) return <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-center text-[12px] text-zinc-500">reading the live stack…</div>
   const h = p.harness, c = p.chrome
@@ -392,6 +398,56 @@ function ConfigRow({ cfg, accent, run }) {
         </div>
         <div className="mt-0.5 text-[12px] leading-relaxed text-zinc-500">imports the browser playbooks into <code className="cl-mono">~/.claude/CLAUDE.md</code> so agents know how to drive it — kept aimed at the current skill by a symlink, so the path can’t rot.</div>
       </div>
+    </div>
+  )
+}
+
+// one imported playbook — its headings as a table of contents, expandable to
+// the exact bytes every agent session reads (fetched lazily, whitelisted server-side)
+function AgentDoc({ doc, self }) {
+  const [open, setOpen] = useState(false)
+  const [content, setContent] = useState(null)
+  const toggle = () => {
+    setOpen((o) => !o)
+    if (content == null) fetch(self.api + '/agent-doc?path=' + encodeURIComponent(doc.path)).then((r) => r.json()).then((d) => setContent(d.content || '(could not load this doc)')).catch(() => setContent('(could not load this doc)'))
+  }
+  return (
+    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+      <div className="p-5">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span className={cn('inline-block size-2 shrink-0 rounded-full', doc.exists ? 'bg-emerald-400' : 'bg-amber-400')} />
+          <code className="cl-mono text-[14px] font-semibold text-zinc-100">{doc.title || doc.import}</code>
+          {doc.exists && <span className="cl-mono text-[10.5px] text-zinc-600">{(doc.bytes / 1000).toFixed(1)} kB · {doc.lines} lines</span>}
+        </div>
+        {/* the wiring: where the file really lives, which install put it there,
+            and what claude-md.sh did to hook it up */}
+        <div className="mt-2.5 space-y-1.5 rounded-lg bg-white/[0.03] px-3 py-2.5 text-[11.5px] leading-relaxed">
+          <div className="flex gap-2.5"><span className="w-[76px] shrink-0 text-zinc-600">file</span><span className="cl-mono min-w-0 break-all text-zinc-400">{doc.path}{doc.realPath && <span className="text-zinc-600"> → {doc.realPath}</span>}</span></div>
+          {doc.source && <div className="flex gap-2.5"><span className="w-[76px] shrink-0 text-zinc-600">installed by</span><span className="min-w-0 text-zinc-400">ships inside <code className="cl-mono text-zinc-300">{doc.source.pkg}</code> ({doc.source.via}) — <code className="cl-mono break-all">{doc.source.cmd}</code></span></div>}
+          <div className="flex gap-2.5"><span className="w-[76px] shrink-0 text-zinc-600">wired by</span><span className="min-w-0 text-zinc-400"><code className="cl-mono text-zinc-300">claude-md.sh</code>{doc.realPath
+            ? <> — made the path above a <span className="text-zinc-300">symlink</span> into the installed package, re-aimed on every apply, so the playbook always matches the installed version</>
+            : <> — wrote this absolute path into the managed block at apply time</>}</span></div>
+        </div>
+        {doc.exists ? (
+          <>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {doc.headings.map((h) => <span key={h} className="rounded-md bg-white/[0.05] px-2 py-1 text-[11px] text-zinc-300">{h}</span>)}
+            </div>
+            <button onClick={toggle} className="mt-3.5 inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3.5 py-1.5 text-[12px] font-semibold text-zinc-300 transition hover:border-white/30 hover:text-zinc-100">
+              <Icon name="book-open" size={13} /> {open ? 'Hide the text' : 'Read the exact text agents get'}
+            </button>
+          </>
+        ) : (
+          <p className="mt-2 text-[12px] text-amber-400">missing on disk — re-apply the CLAUDE.md config in the card above.</p>
+        )}
+      </div>
+      {open && (
+        <div className="border-t border-white/[0.08]">
+          {content == null
+            ? <div className="p-5"><div className="animate-pulse space-y-2.5">{['92%', '70%', '84%', '55%'].map((w, i) => <div key={i} className="h-3 rounded bg-white/[0.06]" style={{ width: w }} />)}</div></div>
+            : <pre className="cl-mono max-h-[420px] overflow-auto whitespace-pre-wrap break-words bg-black/40 p-5 text-[11.5px] leading-relaxed text-zinc-300">{content}</pre>}
+        </div>
+      )}
     </div>
   )
 }
@@ -506,17 +562,28 @@ export default function Module() {
             </div>
           </Step>
 
-          {/* on your machine — the pieces of the stack and where each installs from */}
+          {/* on your machine — the pieces of the stack, each with its exact install
+              command in the open. Checked on page load: a missing installer (uv /
+              npm) surfaces as an amber prerequisite with its own install line,
+              instead of a button that would fail. */}
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
             <div className="mb-3.5 text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">On your machine</div>
             <div className="space-y-3.5">
               <ToolRow installed={harness.installed} name="browser-harness" accent={ACCENT} v={(snap?.versions || {})['browser-harness']} run={run}
-                desc="the engine — drives the browser straight from raw CDP. Installed from GitHub via uv."
-                installLabel="Install from GitHub"
+                desc="the engine — drives the browser straight from raw CDP. Installed and updated from PyPI via uv."
+                installLabel="Install from PyPI"
+                cmd={!harness.installed ? 'uv tool install --python 3.12 --upgrade --force browser-harness' : null}
+                blocked={snap && !snap.tools?.uv?.installed && !snap.tools?.pipx?.installed
+                  ? <>needs <code className="cl-mono">uv</code> first: <code className="cl-mono">curl -LsSf https://astral.sh/uv/install.sh | sh</code> (or <code className="cl-mono">brew install uv</code>)</>
+                  : null}
                 onInstall={() => run && run('install-browser-harness', { confirm: true })} />
               <ToolRow installed={horseInstalled} name="horse-browser" accent={ACCENT} v={(snap?.versions || {})['horse-browser']} run={run}
                 desc="the dedicated Chrome your agents share — installed and updated from npm (@pa1nd/horse-browser)."
                 installLabel="Install from npm"
+                cmd={!horseInstalled ? 'npm install -g @pa1nd/horse-browser' : null}
+                blocked={snap && !snap.tools?.npm?.installed
+                  ? <>needs Node.js first: <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="underline underline-offset-2">nodejs.org</a> (or <code className="cl-mono">brew install node</code>)</>
+                  : null}
                 onInstall={() => run && run('install-horse-browser', { confirm: true })} />
               <ConfigRow cfg={(snap?.versions || {})['browser-config']} accent={ACCENT} run={run} />
             </div>
@@ -542,6 +609,39 @@ export default function Module() {
             <p className="mb-5 max-w-2xl text-[14px] leading-relaxed text-zinc-400">The live stack on your machine — the agents browsing, the harness instances driving them, and the Horse Browser tabs they have open.</p>
             <ProcessWall self={self} />
           </div>
+        </Reveal>
+      )}
+
+      {/* how agents learn it — the managed CLAUDE.md block and the playbooks it
+          imports, read live from disk: the exact text every session starts with */}
+      {snap && (
+        <Reveal className="@container">
+          <Step dark label="How agents learn it" color={ACCENT} title="The knowledge ships with the config" className="!mt-16"
+            lead={<>There's no prompting ritual. <code className="cl-mono text-[13px] text-zinc-200">claude-md.sh</code> keeps one managed block in <code className="cl-mono text-[13px] text-zinc-200">~/.claude/CLAUDE.md</code>, and that block @-imports the playbooks below — so every Claude Code session starts already knowing how to drive this browser.</>}>
+            {snap.agentDocs?.blockPresent ? (
+              <>
+                <div className="cl-mono mb-2.5 flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+                  <span className="rounded-md bg-white/5 px-2 py-1">{snap.agentDocs.blockPath}</span><span className="text-zinc-600">→</span>
+                  <span className="rounded-md bg-white/5 px-2 py-1"># {snap.agentDocs.blockTitle || 'Browsing'} · the managed block</span><span className="text-zinc-600">→</span>
+                  <span className="rounded-md bg-white/5 px-2 py-1">@-imports</span><span className="text-zinc-600">→</span>
+                  <span className="rounded-md px-2 py-1" style={{ background: ACCENT + '22', color: ACCENT }}>every new session</span>
+                </div>
+                {snap.agentDocs.maintainer && (
+                  <p className="mb-5 max-w-2xl text-[12px] leading-relaxed text-zinc-500">
+                    The whole wiring is owned by <code className="cl-mono text-zinc-400">{snap.agentDocs.maintainer}</code> — it ships in the horse-browser package; <code className="cl-mono">apply</code> (re)writes the block and re-aims the symlink, <code className="cl-mono">check</code> detects drift (that's the “CLAUDE.md config” row in the install card above).
+                  </p>
+                )}
+                <div className="grid grid-cols-1 items-start gap-4 @4xl:grid-cols-2">
+                  {snap.agentDocs.docs.map((d) => <AgentDoc key={d.import} doc={d} self={self} />)}
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center gap-2.5 rounded-2xl border border-amber-400/25 bg-amber-400/[0.06] px-4 py-3 text-[13px] text-amber-300">
+                <span className="size-2 shrink-0 rounded-full bg-amber-400" />
+                The managed block isn't in <code className="cl-mono">~/.claude/CLAUDE.md</code> yet — apply the CLAUDE.md config in the card above, and the playbooks appear here.
+              </div>
+            )}
+          </Step>
         </Reveal>
       )}
     </div>

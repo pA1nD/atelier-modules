@@ -28,6 +28,7 @@ const UUID_JSONL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const UUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
 const CDP = 'http://127.0.0.1:9223'
 const HB_NPM = '@pa1nd/horse-browser'
+const GLOBAL_CLAUDE_MD = path.join(HOME, '.claude', 'CLAUDE.md')
 const ACTIVE_MS = 4 * 60 * 1000           // transcript touched this recently ⇒ mid-turn ("working now")
 const RUNNING_MS = 30 * 60 * 1000         // ...this recently ⇒ likely still open
 const RECENT_MS = 36 * 60 * 60 * 1000     // discovery window for the session list
@@ -310,7 +311,7 @@ async function computeVersions() {
   ])
   const hb = hbVersion()
   return {
-    'browser-harness': { installed: !!findOnPath('browser-harness'), version: bh, latest: bhL, upToDate: verGE(bh, bhL), action: 'install-browser-harness', via: 'git · uv tool' },
+    'browser-harness': { installed: !!findOnPath('browser-harness'), version: bh, latest: bhL, upToDate: verGE(bh, bhL), action: 'install-browser-harness', via: 'PyPI · uv tool' },
     'horse-browser':   { installed: !!findOnPath('horse-browser'), version: hb, latest: hbL, upToDate: verGE(hb, hbL), action: 'install-horse-browser', via: 'npm' },
     'browser-config':  { scriptAvailable: cfg.scriptAvailable, installed: cfg.scriptAvailable && cfg.upToDate === true, upToDate: cfg.upToDate, action: 'install-browser-config', via: 'claude-md.sh' },
   }
@@ -327,6 +328,59 @@ async function softwareVersions() {
   return _verVal
 }
 
+/* ── what agents actually read — the managed CLAUDE.md block and the skill
+ *    docs it @-imports. claude-md.sh keeps ONE block between
+ *    `<!-- horse-browser:begin -->` / `<!-- horse-browser:end -->` markers in
+ *    ~/.claude/CLAUDE.md; the block imports the playbooks, and every Claude
+ *    Code session loads them at start. Parsed live so the page shows the
+ *    exact chain (including the version-agnostic symlink into the installed
+ *    browser-harness package). */
+// which installed package a doc's REAL path lives in — so the page can say
+// where each playbook came from and which command put it there.
+function classifyDocSource(realAbs) {
+  if (/\/uv\/tools\/browser-harness\//.test(realAbs)) return { pkg: 'browser-harness', via: 'PyPI · uv tool', cmd: 'uv tool install --python 3.12 --upgrade --force browser-harness' }
+  if (/\/pipx\/venvs\/browser-harness\//.test(realAbs)) return { pkg: 'browser-harness', via: 'PyPI · pipx', cmd: 'pipx install --force browser-harness' }
+  const hbRoot = hbPackageRoot()
+  if (hbRoot && (realAbs === hbRoot || realAbs.startsWith(hbRoot + path.sep))) return { pkg: HB_NPM, via: 'npm', cmd: 'npm install -g ' + HB_NPM }
+  return null
+}
+
+function agentDocs() {
+  const short = (p) => p.replace(HOME, '~')
+  const out = { blockPresent: false, blockPath: short(GLOBAL_CLAUDE_MD), blockTitle: null, maintainer: null, docs: [] }
+  const cm = hbClaudeMdScript()
+  if (cm) out.maintainer = short(cm)
+  let txt = ''
+  try { txt = fs.readFileSync(GLOBAL_CLAUDE_MD, 'utf8') } catch { return out }
+  const b = txt.indexOf('<!-- horse-browser:begin')
+  const e = txt.indexOf('<!-- horse-browser:end')
+  if (b === -1 || e === -1 || e < b) return out
+  out.blockPresent = true
+  const block = txt.slice(b, e)
+  const h1 = /^#\s+(.+?)\s*$/m.exec(block)
+  out.blockTitle = h1 ? h1[1] : null
+  const imports = [...block.matchAll(/^@(\S+)\s*$/gm)].map((m) => m[1])
+  out.docs = imports.map((imp) => {
+    const p = /^~(?=\/|$)/.test(imp) ? HOME + imp.slice(1) : imp
+    const d = { import: imp, path: short(p), realPath: null, exists: false, bytes: 0, lines: 0, title: null, headings: [], source: null }
+    try {
+      const isLink = fs.lstatSync(p).isSymbolicLink()
+      const real = fs.realpathSync(p)   // resolves the doc's true home even through intermediate links
+      if (isLink) d.realPath = short(real)
+      d.source = classifyDocSource(real)
+      const body = fs.readFileSync(p, 'utf8')
+      d.exists = true
+      d.bytes = Buffer.byteLength(body)
+      d.lines = body.split('\n').length
+      const t = /^#\s+(.+?)\s*$/m.exec(body)
+      d.title = t ? t[1] : path.basename(p)
+      d.headings = [...body.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => m[1]).slice(0, 14)
+    } catch {}
+    return d
+  })
+  return out
+}
+
 async function snapshot() {
   const [cdp, harness] = await Promise.all([cdpInfo(), harnessInfo()])
   return {
@@ -334,10 +388,16 @@ async function snapshot() {
     tools: {
       'browser-harness': { installed: !!findOnPath('browser-harness') },
       'horse-browser': { installed: !!findOnPath('horse-browser') },
+      // the installers the one-click buttons need — surfaced on page load so a
+      // missing prerequisite shows up with its install command, not as a failed run
+      uv: { installed: !!findOnPath('uv') },
+      pipx: { installed: !!findOnPath('pipx') },
+      npm: { installed: !!findOnPath('npm') },
     },
     cdp,
     harness,
     versions: await softwareVersions(),
+    agentDocs: agentDocs(),
   }
 }
 
@@ -396,6 +456,17 @@ export default {
     /* ── instruments ── */
     router.get('/snapshot', async (req, res) => res.json(await snapshot()))
 
+    // the full text of one imported agent doc — whitelisted against the docs the
+    // managed block actually imports, so this can never read an arbitrary path.
+    router.get('/agent-doc', (req, res) => {
+      const want = String(req.query.path || '')
+      const hit = agentDocs().docs.find((d) => d.path === want && d.exists)
+      if (!hit) return res.json({ error: 'unknown doc' }, 404)
+      const abs = /^~(?=\/|$)/.test(hit.path) ? HOME + hit.path.slice(1) : hit.path
+      try { res.json({ path: hit.path, content: fs.readFileSync(abs, 'utf8') }) }
+      catch { res.json({ error: 'unreadable' }, 500) }
+    })
+
     // the live stack: agent sessions → browser-harness daemons → chrome tabs, with a status check per column
     const cachedLatest = async (key, fn, ttl = 20 * 60 * 1000) => {
       const c = slot.verCache[key]
@@ -404,7 +475,19 @@ export default {
       slot.verCache[key] = { at: Date.now(), val }
       return val
     }
-    router.get('/processes', async (req, res) => {
+    // the tab→session map costs a WebSocket round-trip to the extension's service
+    // worker, so memoize it on the open-tab fingerprint (+ a short TTL for group
+    // membership changes that don't change the tab set).
+    const cachedTabGroups = async (cdp) => {
+      if (!cdp.up) return {}
+      const key = cdp.tabSample.map((t) => t.id).sort().join(',')
+      const c = slot.tabMapCache
+      if (c && c.key === key && Date.now() - c.at < 30000) return c.val
+      const val = await tabGroups()
+      slot.tabMapCache = { key, at: Date.now(), val }
+      return val
+    }
+    const buildProcesses = async () => {
       const [cdp, harness, claudeProcs] = await Promise.all([cdpInfo(), harnessInfo(), pgrepClaude()])
       const resumeIds = new Set()
       for (const p of claudeProcs) { const m = UUID_RE.exec(p.cmd || ''); if (m) resumeIds.add(m[1]) }
@@ -413,16 +496,41 @@ export default {
         cachedLatest('hv', harnessVersion, 3 * 60 * 1000),
         cachedLatest('latestH', latestHarnessVersion),
         cachedLatest('latestC', latestChromeVersion),
-        cdp.up ? tabGroups() : Promise.resolve({}),
+        cachedTabGroups(cdp),
       ])
       const chromeVer = cdp.browser ? cdp.browser.replace(/^Chrome\//, '') : null
-      res.json({
+      return {
         harness: { running: harness.daemons.length > 0, count: harness.daemons.length, daemons: harness.daemons.slice(0, 16), version: hv, latest: latestH, upToDate: verGE(hv, latestH) },
         chrome: { running: cdp.up, version: chromeVer, pid: cdp.pids[0] || null, latest: latestC, upToDate: verGE(chromeVer, latestC) },
         sessions: sessions.map((s) => ({ id: s.id, emoji: s.emoji, callsign: s.callsign, color: s.color, cwd: s.cwd, active: s.active })),
         tabs: cdp.tabSample.map((t) => ({ title: t.title, domain: t.domain, agent: t.title.startsWith('🐴') || t.title.startsWith('🐎'), callsign: tabMap[t.id] || null })),
-      })
-    })
+      }
+    }
+    router.get('/processes', async (req, res) => res.json(await buildProcesses()))
+
+    /* ── the live push — the shell WS is the realtime channel, so the poll lives
+     *    HERE, server-side, once for all viewers. Nothing in this stack emits
+     *    events we could subscribe to for free (the CDP tab list, pgrep'd
+     *    daemons, and transcript mtimes are all outside our process), so one
+     *    watcher recomputes every few seconds and broadcasts ONLY on change —
+     *    clients fetch once on mount, then just listen. An idle machine sends
+     *    no frames at all. */
+    const tick = async (force = false) => {
+      if (slot.watchBusy) return
+      slot.watchBusy = true
+      try {
+        const s = await snapshot()
+        const sKey = JSON.stringify({ ...s, now: 0 })
+        if (force || sKey !== slot.lastSnapKey) { slot.lastSnapKey = sKey; ctx.broadcast({ type: 'snapshot', snapshot: s }) }
+        const p = await buildProcesses()
+        const pKey = JSON.stringify(p)
+        if (force || pKey !== slot.lastProcKey) { slot.lastProcKey = pKey; ctx.broadcast({ type: 'processes', processes: p }) }
+      } catch {}
+      finally { slot.watchBusy = false }
+    }
+    const tickNow = () => { tick(true).catch(() => {}) }
+    if (slot.watchTimer) clearInterval(slot.watchTimer)   // an async mountRoutes' teardown is dropped by the shell — never stack watchers
+    slot.watchTimer = setInterval(() => { tick().catch(() => {}) }, 4000)
 
     // Serve bundled imagery from the module's media/ folder (data/ doesn't ship). basename()
     // strips any traversal; a missing file is a clean 404, never a thrown read.
@@ -452,14 +560,19 @@ export default {
 
       switch (id) {
         case 'install-browser-harness': {
+          // browser-harness is on PyPI now. The flags follow the project's own
+          // install doc: --python 3.12 keeps uv from resolving an old release
+          // built for older Pythons; --upgrade --force replaces any previous
+          // tool install with the latest stable — so install and update are
+          // the same command.
           const uv = findOnPath('uv'), pipx = findOnPath('pipx')
           let r
-          if (uv) r = await runQuiet(id, uv, ['tool', 'install', '--force', 'git+https://github.com/browser-use/browser-harness'])
-          else if (pipx) r = await runQuiet(id, pipx, ['install', '--force', 'git+https://github.com/browser-use/browser-harness'])
+          if (uv) r = await runQuiet(id, uv, ['tool', 'install', '--python', '3.12', '--upgrade', '--force', 'browser-harness'])
+          else if (pipx) r = await runQuiet(id, pipx, ['install', '--force', 'browser-harness'])
           else { emit(id, 'need uv (or pipx) to install — get uv at https://astral.sh/uv', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
           slot.verCache = {}; verBust()
-          emit(id, r.ok ? '✓ browser-harness installed from GitHub' : `✗ install failed (exit ${r.code})`, r.ok ? 'ok' : 'stderr')
-          done(id, { ok: r.ok }); ctx.broadcast({ type: 'snapshot-dirty' })
+          emit(id, r.ok ? '✓ browser-harness installed from PyPI' : `✗ install failed (exit ${r.code})`, r.ok ? 'ok' : 'stderr')
+          done(id, { ok: r.ok }); tickNow()
           return res.json({ ok: r.ok })
         }
         case 'install-horse-browser': {
@@ -467,7 +580,7 @@ export default {
           const npm = findOnPath('npm')
           if (!npm) { emit(id, 'npm not found — install Node.js first (https://nodejs.org)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
           const r = await runQuiet(id, npm, ['install', '-g', `${HB_NPM}@latest`])
-          if (!r.ok) { emit(id, `✗ npm install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); ctx.broadcast({ type: 'snapshot-dirty' }); return res.json({ ok: false }) }
+          if (!r.ok) { emit(id, `✗ npm install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
           emit(id, `✓ ${HB_NPM} installed from npm`, 'ok')
           // also import the browser playbooks into ~/.claude/CLAUDE.md (idempotent, backs up) —
           // the config that lets agents actually drive it. claude-md.sh ships in the package.
@@ -478,16 +591,16 @@ export default {
             emit(id, r2.ok ? '✓ CLAUDE.md browser config applied' : `⚠ claude-md.sh apply failed (exit ${r2.code}) — run "Set up" on the config row`, r2.ok ? 'ok' : 'stderr')
           }
           slot.verCache = {}; verBust()
-          done(id, { ok: true }); ctx.broadcast({ type: 'snapshot-dirty' })
+          done(id, { ok: true }); tickNow()
           return res.json({ ok: true })
         }
         case 'install-browser-config': {
           // claude-md.sh writes the browser-playbook @-import into ~/.claude/CLAUDE.md
           // (idempotent, backs up, re-points the version-agnostic symlink). `apply` = (re)install.
           const script = hbClaudeMdScript()
-          if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first', 'stderr'); done(id, { ok: false }); ctx.broadcast({ type: 'snapshot-dirty' }); return res.json({ ok: false }) }
+          if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first', 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
           const r = await runStreaming(id, 'bash', [script, 'apply'])
-          slot.verCache = {}; verBust(); ctx.broadcast({ type: 'snapshot-dirty' })
+          slot.verCache = {}; verBust(); tickNow()
           return res.json(r)
         }
         default:
@@ -497,10 +610,11 @@ export default {
 
     ctx.log('horse-browser · night console mounted')
 
-    // Teardown: kill any in-flight installer children on hot-reload + exit.
-    // Children are spawned detached (own process group) so we can take the
-    // whole group down — no orphaned grandchild left behind.
+    // Teardown: stop the live-push watcher and kill any in-flight installer
+    // children on hot-reload + exit. Children are spawned detached (own process
+    // group) so we can take the whole group down — no orphaned grandchild.
     return () => {
+      if (slot.watchTimer) { clearInterval(slot.watchTimer); slot.watchTimer = null }
       for (const c of slot.children) {
         try { process.kill(-c.pid, 'SIGTERM') } catch {}
         try { c.kill('SIGTERM') } catch {}

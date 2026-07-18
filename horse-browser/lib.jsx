@@ -85,17 +85,18 @@ export function useDark() {
 }
 
 /* ───────────────────────── live-data hooks ───────────────────────────────── */
-export function useSnapshot(self, intervalMs = 4500) {
+// One HTTP fetch for initial state, then the shell WebSocket does the rest —
+// the backend watches the machine server-side and pushes a full snapshot frame
+// whenever anything changed. No client-side polling.
+export function useSnapshot(self) {
   const [snap, setSnap] = useState(null)
   const refresh = useCallback(() => {
     fetch(self.api + '/snapshot').then((r) => r.json()).then(setSnap).catch(() => {})
   }, [self.api])
   useEffect(() => {
     refresh()
-    const t = setInterval(refresh, intervalMs)
-    const unsub = self.subscribe((f) => { if (f.type === 'snapshot-dirty') setTimeout(refresh, 250) })
-    return () => { clearInterval(t); unsub && unsub() }
-  }, [refresh, intervalMs])
+    return self.subscribe((f) => { if (f.type === 'snapshot' && f.snapshot) setSnap(f.snapshot) })
+  }, [refresh])
   return { snap, refresh }
 }
 
@@ -155,6 +156,10 @@ const ICON_PATHS = {
   ],
   star: [['path', { d: 'M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z' }]],
   check: [['path', { d: 'M20 6 9 17l-5-5' }]],
+  'book-open': [
+    ['path', { d: 'M12 7v14' }],
+    ['path', { d: 'M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z' }],
+  ],
   square: [['rect', { width: 18, height: 18, x: 3, y: 3, rx: 2 }]],
 }
 export function Icon({ name, size = 16, strokeWidth = 1.85, className = '', style }) {

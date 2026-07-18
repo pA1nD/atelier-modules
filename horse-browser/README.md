@@ -26,7 +26,7 @@ Pure Node builtins, no deps.
 - `GET /snapshot` — the CDP on :9223 (version · tabs · pid), harness daemons, tool presence, versions.
 - `GET /processes` — the live stack: sessions (codenames + cwd), daemons (BU_NAME → callsign), tabs (→ session via the extension's tab groups).
 - `GET /images/:name` — bundled imagery (basename-guarded).
-- `POST /action/:id` — streams over the shell WS: `install-browser-harness` (uv/pipx from GitHub), `install-horse-browser` (**npm — `@pa1nd/horse-browser`**, install and update are the same command; applies `claude-md.sh` after), `install-browser-config` (`claude-md.sh apply`). Outward actions refuse without `{ confirm: true }`; children tracked + killed on hot-reload/shutdown.
+- `POST /action/:id` — streams over the shell WS: `install-browser-harness` (uv/pipx from PyPI, `uv tool install --python 3.12 --upgrade --force browser-harness`), `install-horse-browser` (**npm — `@pa1nd/horse-browser`**, install and update are the same command; applies `claude-md.sh` after), `install-browser-config` (`claude-md.sh apply`). Outward actions refuse without `{ confirm: true }`; children tracked + killed on hot-reload/shutdown.
 
 ## horse-browser is an npm package now
 
