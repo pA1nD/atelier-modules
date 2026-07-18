@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fillTemplate, claudeMdState, installClaudeMd } from '../backend.js'
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-md-test-'))
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'floorplan-test-'))
 
 test('fillTemplate replaces every placeholder', () => {
   const out = fillTemplate('a {{INSTANCE}} b {{MODULES}} c {{CHROMES}} d {{PORT}} e {{INSTANCE}}',
@@ -20,14 +20,14 @@ test('claudeMdState: none / present / ours', () => {
   assert.equal(claudeMdState(f), 'none')
   fs.writeFileSync(f, '# My own rules\n')
   assert.equal(claudeMdState(f), 'present')
-  fs.writeFileSync(f, '<!-- atelier-agent-md: x v1 -->\n# Ours\n')
+  fs.writeFileSync(f, '<!-- atelier-floorplan: x v1 -->\n# Ours\n')
   assert.equal(claudeMdState(f), 'ours')
 })
 
 test('installClaudeMd writes fresh, appends with backup, no-ops on ours', () => {
   const d = tmp()
   const f = path.join(d, 'CLAUDE.md')
-  const block = '<!-- atelier-agent-md: t v1 -->\n# Playbook\n'
+  const block = '<!-- atelier-floorplan: t v1 -->\n# Playbook\n'
 
   const r1 = installClaudeMd(f, block)
   assert.equal(r1.mode, 'written')

@@ -2,7 +2,7 @@
   "id": "atelier-modules",
   "name": "Atelier Modules",
   "label": "Atelier Modules",
-  "description": "Eight apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console with its HB Auth and HB Display wings, CLAUDE.md, gwx, the Atelier Config settings panel, and Agent MD, the three-folder layout for serious agent development — plus catalyst-chrome, the theme they render in.",
+  "description": "Eight apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console with its HB Auth and HB Display wings, CLAUDE.md, gwx, the Atelier Config settings panel, and Floorplan, the three-folder layout for serious agent development — plus catalyst-chrome, the theme they render in.",
   "apps": [
     {
       "id": "statusbar",
@@ -11,7 +11,11 @@
       "tagline": "A name for every agent, and the terminal line that wears it.",
       "category": "Developer Tools",
       "description": "**Session Codes + the Claude Code status bar.** Every session earns a tiny identity — callsign, colour, emoji — from one hash the terminal, the dashboard, and the browser all agree on. Part 01 teaches the identity engine with a live rolling decoder and the 48-codename grid; part 02 dissects the statusline piece by piece, then wires it into `~/.claude/settings.json` with one click (merged, never clobbered — backed up first). The page honestly reports what's wired: this module's script, the same codename script from another copy, a different statusline, or nothing.",
-      "tags": ["claude-code", "terminal", "identity"],
+      "tags": [
+        "claude-code",
+        "terminal",
+        "identity"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []
@@ -23,7 +27,12 @@
       "tagline": "Give your agents a browser of their own — logged in, and never in your way.",
       "category": "Developer Tools",
       "description": "**The night console.** A second browser just for agents — signed in once, quietly shared, never stealing your screen. Built on browser-harness (~600 lines of raw-CDP engine vs ~120k for Playwright — the bitter lesson of agent harnesses) and the dedicated Horse Browser, installed and updated from npm (`@pa1nd/horse-browser`). The page shows a live wall of your real stack: agent sessions, the harness daemons driving them, and the actual tabs they have open — name-matched by session codename.",
-      "tags": ["claude-code", "browser", "cdp", "agents"],
+      "tags": [
+        "claude-code",
+        "browser",
+        "cdp",
+        "agents"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []
@@ -35,7 +44,10 @@
       "tagline": "A note Claude reads before it writes a line.",
       "category": "Developer Tools",
       "description": "**The note Claude reads first.** The four rules that went viral — Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution — with the story of where they came from, and a modal that renders the full skill. Your real `~/.claude/CLAUDE.md` is read live, chapter by chapter, with the four-rules chapter lit when present; one click appends the block (never clobbers, always backed up). Also tracks the Horse Browser playbooks import that shares the same file.",
-      "tags": ["claude-code", "config"],
+      "tags": [
+        "claude-code",
+        "config"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []
@@ -47,7 +59,12 @@
       "tagline": "Your whole Google Workspace, in your agent's hands.",
       "category": "Developer Tools",
       "description": "**One multi-account command over your whole Google Workspace.** Gmail, Calendar, Drive, Docs, Sheets and more — reads fan out across every account in parallel, and a library of 96 ready-made agent skills (per-service helpers, multi-step recipes, whole personas) loads on demand, browsable in a searchable catalogue. A skill + a CLI beats an MCP: the agent gets the whole command surface, not a hand-picked menu. Installed and updated from npm (`@pa1nd/gwx`), with live per-account sign-in state.",
-      "tags": ["claude-code", "google-workspace", "cli", "agents"],
+      "tags": [
+        "claude-code",
+        "google-workspace",
+        "cli",
+        "agents"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []
@@ -59,7 +76,13 @@
       "tagline": "Credentials your agents can use but never see.",
       "category": "Developer Tools",
       "description": "**The credentials & login-methods manager for agents.** An account registry / recipe book over your vault, and the ENFORCED Bitwarden broker — a signed local daemon that holds the only vault session and gates every credential behind per-credential policy, an origin check read from the browser, and a native macOS approval. Secrets are typed straight into the page over CDP, so they never enter the model's context. Ships the older LastPass + SMS-2FA convention path too. macOS only; the broker compiles on first run (Swift / Xcode CLT) and the Bitwarden CLI does the vault I/O.",
-      "tags": ["claude-code", "credentials", "bitwarden", "security", "horse-browser"],
+      "tags": [
+        "claude-code",
+        "credentials",
+        "bitwarden",
+        "security",
+        "horse-browser"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []
@@ -71,7 +94,13 @@
       "tagline": "Screenshots that survive a closed lid.",
       "category": "Developer Tools",
       "description": "**The Horse Browser's display & health wing.** With the display asleep — especially clamshell — WindowServer composites nothing and agent screenshots hang. This page answers the headline question with a REAL probe (a timed 1×1 CDP screenshot), shows the display census (asleep / clamshell / virtual displays), installs and launches DeskPad (audited: 436 lines, sandboxed, no network entitlement) for a virtual display that never sleeps, and streams the launcher's self-heal journal live. macOS only.",
-      "tags": ["claude-code", "display", "screenshots", "deskpad", "horse-browser"],
+      "tags": [
+        "claude-code",
+        "display",
+        "screenshots",
+        "deskpad",
+        "horse-browser"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []
@@ -83,19 +112,31 @@
       "tagline": "Your whole instance, edited from inside it.",
       "category": "Developer Tools",
       "description": "**The instance's settings panel.** atelier.config.json as a friendly form or a highlighted raw-JSON editor — saves are staged, shape-validated, written atomically, and patch-merged so a concurrent edit is never clobbered (a drifted key rejects as a conflict instead). Manage apps & workspaces by drag-and-drop (link/unlink path-mounts, create/rename/delete workspaces, chrome-coloured lanes), check the system's package managers against the latest LTS / stable upstream, run the instance at login as a macOS LaunchAgent (with a guided port handoff from your dev server), and watch the server's real output stream live. No client polling — launchd state and log tails arrive over the shell WebSocket.",
-      "tags": ["atelier", "settings", "config", "workspaces", "launchd"],
+      "tags": [
+        "atelier",
+        "settings",
+        "config",
+        "workspaces",
+        "launchd"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []
     },
     {
-      "id": "agent-md",
-      "name": "Agent MD",
+      "id": "floorplan",
+      "name": "Floorplan",
       "icon": "folder-tree",
       "tagline": "Three folders, three jobs — the layout agents can't wreck.",
       "category": "Developer Tools",
       "description": "**The three-folder layout for serious agent development, installed.** Instance folder (the wiring: config, .env, shell), modules folder (the workshop — agents build here), chromes folder (the themes — hands off from module tasks). Each gets its own CLAUDE.md playbook, filled with YOUR instance's real paths — existing files are backed up and appended to, never clobbered, and every template is previewable first. A live checklist reads your instance (folders, installPath wiring, playbook states, honestly reported), and a migration scan lists what still lives in the wrong folder with a copyable step-by-step agent brief. Works right after a fresh install — or as the guided migration for an instance that's been running for a while.",
-      "tags": ["atelier", "claude-code", "claude-md", "agents", "onboarding"],
+      "tags": [
+        "atelier",
+        "claude-code",
+        "claude-md",
+        "agents",
+        "onboarding"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []
@@ -107,7 +148,11 @@
       "tagline": "The Catalyst-based theme these modules render in.",
       "category": "Themes",
       "description": "The **chrome** the collection's modules pin (`meta.chrome = 'catalyst-chrome'`) — a Tailwind Catalyst-based theme that owns the rail, topbar, tokens, and dark mode, and publishes the `@atelier/kit` primitives (Button, Dialog, Table, …) companion modules import.",
-      "tags": ["chrome", "theme", "catalyst"],
+      "tags": [
+        "chrome",
+        "theme",
+        "catalyst"
+      ],
       "homepage": null,
       "author": null,
       "screenshots": []

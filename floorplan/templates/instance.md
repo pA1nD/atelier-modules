@@ -1,4 +1,4 @@
-<!-- atelier-agent-md: instance-folder playbook v1 -->
+<!-- atelier-floorplan: instance-folder playbook v1 -->
 # Atelier — This Folder Runs The Instance
 
 **This folder is the wiring, not the workshop.** It holds

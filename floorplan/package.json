@@ -1,10 +1,10 @@
 {
-  "name": "atelier-agent-md-module",
+  "name": "atelier-floorplan-module",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "Agent MD — the three-folder layout for serious agent development, installed: instance folder (the wiring), modules folder (the workshop), chromes folder (hands off) — each with its own CLAUDE.md playbook, filled with your instance's real paths and appended-with-backup, never clobbered. A live checklist reads your instance (folders, installPath wiring, playbook states), and a migration scan lists what still lives in the wrong folder with a copyable agent brief. Works right after a fresh install or as the guided migration for a long-running instance.",
+  "description": "Floorplan — the three-folder layout for serious agent development, installed: instance folder (the wiring), modules folder (the workshop), chromes folder (hands off) — each with its own CLAUDE.md playbook, filled with your instance's real paths and appended-with-backup, never clobbered. A live checklist reads your instance (folders, installPath wiring, playbook states), and a migration scan lists what still lives in the wrong folder with a copyable agent brief. Works right after a fresh install or as the guided migration for a long-running instance.",
   "keywords": [
     "atelier",
     "claude-code",

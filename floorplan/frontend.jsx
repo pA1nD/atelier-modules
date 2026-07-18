@@ -1,4 +1,4 @@
-// Agent MD — the three-folder layout for serious agent development, as a page:
+// Floorplan — the three-folder layout for serious agent development, as a page:
 // the story (instance / modules / chromes, one job each), a live checklist that
 // reads YOUR instance (folders, installPath wiring, the three CLAUDE.md
 // playbooks — honest states: ours / yours / none), and a migration scan with a
@@ -8,7 +8,7 @@
 import { Button, Input, Heading, Text } from '@atelier/kit'
 import { ICONS } from './icons.js'
 
-export const meta = { name: 'Agent MD', icon: 'folder-tree', chrome: 'catalyst-chrome' }
+export const meta = { name: 'Floorplan', icon: 'folder-tree', chrome: 'catalyst-chrome' }
 
 const { useState, useEffect, useCallback, useRef } = React
 const cn = (...p) => p.filter(Boolean).join(' ')
@@ -147,7 +147,7 @@ export default function Module() {
   return (
     <div className="mx-auto max-w-4xl text-zinc-950 dark:text-white">
       <header>
-        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-600/90 dark:text-blue-400/90">Agent MD</div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-600/90 dark:text-blue-400/90">Floorplan</div>
         <h1 className="mt-1.5 text-[30px] font-semibold leading-none tracking-tight">Three folders, three jobs</h1>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
           The layout this collection is built with. An agent building a feature holds <span className="font-medium text-zinc-900 dark:text-white">one module</span> in its

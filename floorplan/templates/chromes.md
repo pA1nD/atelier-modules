@@ -1,4 +1,4 @@
-<!-- atelier-agent-md: chromes-folder playbook v1 -->
+<!-- atelier-floorplan: chromes-folder playbook v1 -->
 # Atelier Chromes — Handle With Care
 
 **This folder holds the chromes (themes) — and possibly the shell itself.**

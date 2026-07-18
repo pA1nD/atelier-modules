@@ -1,4 +1,4 @@
-<!-- atelier-agent-md: modules-folder playbook v1 -->
+<!-- atelier-floorplan: modules-folder playbook v1 -->
 # Atelier Modules — Agent Playbook
 
 **Every subfolder here is one Atelier module**, mounted into the instance at

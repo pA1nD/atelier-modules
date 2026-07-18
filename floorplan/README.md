@@ -1,4 +1,4 @@
-# Agent MD
+# Floorplan
 
 The three-folder layout for serious agent development — taught, detected, and
 installed from one page.
