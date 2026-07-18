@@ -1,0 +1,23 @@
+{
+  "name": "atelier-config-module",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Atelier Config — the instance's settings panel: atelier.config.json edited as a form or raw JSON (validated, patch-merged, conflict-safe), apps & workspaces managed by drag-and-drop (link/unlink path-mounts, create/rename/delete workspaces), a pending-restart tracker with one-click self-restart, start-at-login via a macOS LaunchAgent (with the one-time port takeover from a dev server), live server output, and a package-manager system check. Ported from the marketplace dock's Configure surface.",
+  "keywords": [
+    "atelier",
+    "settings",
+    "config",
+    "workspaces",
+    "launchd",
+    "launchagent"
+  ],
+  "author": "pa1nd",
+  "scripts": {
+    "test": "node --test test/config-util.test.mjs"
+  },
+  "atelier": {
+    "note": "Pure Node builtins, no deps. The General / Apps & Workspaces / Activity / System tabs work anywhere Atelier runs; the Start-at-login tab manages a macOS user LaunchAgent (launchctl, gui/<uid>, no sudo) and reports itself unsupported elsewhere. Config writes are atomic (tmp + rename), shape-validated, and patch-merged so a concurrent edit is never clobbered — a drifted key rejects with a conflict instead. The Activity tab tees this server process's stdout/stderr into a ring buffer; nothing is written to disk."
+  }
+}
