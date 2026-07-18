@@ -1,0 +1,24 @@
+{
+  "name": "atelier-agent-md-module",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Agent MD — the three-folder layout for serious agent development, installed: instance folder (the wiring), modules folder (the workshop), chromes folder (hands off) — each with its own CLAUDE.md playbook, filled with your instance's real paths and appended-with-backup, never clobbered. A live checklist reads your instance (folders, installPath wiring, playbook states), and a migration scan lists what still lives in the wrong folder with a copyable agent brief. Works right after a fresh install or as the guided migration for a long-running instance.",
+  "keywords": [
+    "atelier",
+    "claude-code",
+    "claude-md",
+    "agents",
+    "layout",
+    "setup",
+    "onboarding"
+  ],
+  "author": "pa1nd",
+  "scripts": {
+    "test": "node --test test/layout.test.mjs"
+  },
+  "atelier": {
+    "note": "Pure Node builtins, no deps; runs anywhere Atelier does. Everything it changes is local and reversible: folders are created with mkdir -p (existing ones untouched), atelier.config.json edits are atomic read-modify-writes, and an existing CLAUDE.md is backed up next to the file before the playbook is appended. Migration (moving module folders) is never automated — the module produces a copyable step-by-step brief for an agent instead."
+  }
+}

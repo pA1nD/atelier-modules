@@ -1,0 +1,260 @@
+// Agent MD — the three-folder layout for serious agent development, as a page:
+// the story (instance / modules / chromes, one job each), a live checklist that
+// reads YOUR instance (folders, installPath wiring, the three CLAUDE.md
+// playbooks — honest states: ours / yours / none), and a migration scan with a
+// copyable agent brief. Works right after a fresh install AND as the guided way
+// to migrate an instance that's been running for a while.
+
+import { Button, Input, Heading, Text } from '@atelier/kit'
+import { ICONS } from './icons.js'
+
+export const meta = { name: 'Agent MD', icon: 'folder-tree', chrome: 'catalyst-chrome' }
+
+const { useState, useEffect, useCallback, useRef } = React
+const cn = (...p) => p.filter(Boolean).join(' ')
+const self = window.__atelier.self(import.meta.url)
+
+function Icon({ name, size = 16, strokeWidth = 1.75, className = '', style }) {
+  const nodes = ICONS[name] || ICONS.square
+  return (
+    <span aria-hidden="true" className={cn('inline-flex shrink-0 items-center justify-center', className)} style={{ width: size, height: size, ...style }}>
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+        {nodes.map(([tag, attrs], i) => React.createElement(tag, { key: i, ...attrs }))}
+      </svg>
+    </span>
+  )
+}
+
+function useSnapshot() {
+  const [snap, setSnap] = useState(null)
+  useEffect(() => {
+    fetch(self.api + '/snapshot').then((r) => r.json()).then(setSnap).catch(() => {})
+    return self.subscribe((f) => { if (f.type === 'snapshot' && f.snapshot) setSnap(f.snapshot) })
+  }, [])
+  return snap
+}
+
+/* CLAUDE.md state → an honest chip */
+function MdChip({ state }) {
+  if (state === 'ours') return <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"><Icon name="check" size={10} /> playbook installed</span>
+  if (state === 'present') return <span title="A CLAUDE.md exists that this module didn’t write — installing appends our playbook below yours, after a backup." className="inline-flex cursor-help items-center gap-1 rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400"><Icon name="check" size={10} /> CLAUDE.md (yours)</span>
+  return <span className="inline-flex items-center gap-1 rounded-md bg-zinc-500/15 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">no CLAUDE.md</span>
+}
+
+function StepDot({ done }) {
+  return done
+    ? <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"><Icon name="check" size={14} /></span>
+    : <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-zinc-500/10 text-zinc-400"><Icon name="arrow-right" size={13} /></span>
+}
+
+function CopyBtn({ getText, label = 'Copy', copiedLabel = 'Copied' }) {
+  const [ok, setOk] = useState(false)
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(typeof getText === 'function' ? await getText() : getText); setOk(true); setTimeout(() => setOk(false), 1600) } catch {}
+  }
+  return (
+    <button onClick={copy} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-950/15 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-950/5 dark:border-white/15 dark:text-zinc-300 dark:hover:bg-white/10">
+      <Icon name={ok ? 'check' : 'copy'} size={14} className={ok ? 'text-emerald-500' : ''} /> {ok ? copiedLabel : label}
+    </button>
+  )
+}
+
+/* One folder of the layout — identity, live path + status, its CLAUDE.md */
+function FolderCard({ icon, accent, title, role, p, mdState, children }) {
+  return (
+    <div className="rounded-2xl border border-zinc-950/10 bg-white p-4 shadow-sm shadow-zinc-950/[0.03] dark:border-white/10 dark:bg-white/[0.02] dark:shadow-none">
+      <div className="flex items-start gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-inset ring-black/[0.04]" style={{ background: accent + '22', color: accent }}><Icon name={icon} size={19} /></span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-zinc-950 dark:text-white">{title}</span>
+            {p && (p.exists === undefined || p.exists
+              ? <MdChip state={mdState} />
+              : <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">folder missing</span>)}
+          </div>
+          <p className="mt-0.5 text-xs leading-[1.5] text-zinc-500 dark:text-zinc-400">{role}</p>
+          {p && <div className="mt-1.5 truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500" title={p.path}>{p.path}</div>}
+        </div>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+export default function Module() {
+  const snap = useSnapshot()
+  const [err, setErr] = useState(null)
+  const [busy, setBusy] = useState(null)     // action id in flight
+  const [modPath, setModPath] = useState(null)   // null = follow the snapshot
+  const [chrPath, setChrPath] = useState(null)
+  const [preview, setPreview] = useState(null)   // { name, content }
+  const seeded = useRef(false)
+
+  // Seed the editable paths once from the live snapshot; afterwards they're the user's.
+  useEffect(() => {
+    if (snap && !seeded.current) { seeded.current = true; setModPath(snap.paths.modules.path); setChrPath(snap.paths.chromes.path) }
+  }, [snap])
+
+  const act = useCallback(async (id, route, body) => {
+    setBusy(id); setErr(null)
+    try {
+      const r = await (await fetch(self.api + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })).json()
+      if (r.error) setErr(r.error)
+      return r
+    } catch (e) { setErr(String(e)); return null } finally { setBusy(null) }
+  }, [])
+
+  const showTemplate = async (name) => {
+    if (preview && preview.name === name) { setPreview(null); return }
+    try { setPreview(await (await fetch(self.api + '/template/' + name)).json()) } catch {}
+  }
+
+  if (!snap) return <div className="flex items-center justify-center gap-2 py-24 text-sm text-zinc-500"><Icon name="loader-circle" size={16} className="animate-spin" /> Reading your instance…</div>
+
+  const { paths, migration, done } = snap
+  const pathsBody = { modules: modPath ?? paths.modules.path, chromes: chrPath ?? paths.chromes.path }
+  const migrating = migration.toModules.length + migration.toChromes.length > 0
+  const allDone = done.folders && done.installPath && done.mdInstance && done.mdModules && done.mdChromes && done.migration
+
+  const steps = [
+    {
+      id: 'folders', done: done.folders, title: 'Create the modules & chromes folders',
+      desc: 'Two folders OUTSIDE the instance — the workshop and the theme shelf. Existing folders are left as they are.',
+      action: !done.folders && <Button onClick={() => act('folders', '/action/folders', pathsBody)} disabled={busy === 'folders'}>Create folders</Button>,
+    },
+    {
+      id: 'installpath', done: done.installPath, title: 'Wire installPath in atelier.config.json',
+      desc: 'Points the installer at the layout: `atelier add` drops new modules into the modules folder and chromes into the chromes folder, automatically.',
+      action: !done.installPath && <Button onClick={() => act('installpath', '/action/installpath', pathsBody)} disabled={busy === 'installpath' || !done.folders}>Wire installPath</Button>,
+    },
+    {
+      id: 'md-instance', done: done.mdInstance, tpl: 'instance', title: 'CLAUDE.md — instance folder', state: paths.instance.claudemd,
+      desc: 'The wiring, not the workshop: the folder map, the config as the single wiring point, hands off the shell.',
+      action: paths.instance.claudemd === 'none' && <Button onClick={() => act('md-instance', '/action/claudemd', { target: 'instance' })} disabled={busy === 'md-instance'}>Install</Button>,
+    },
+    {
+      id: 'md-modules', done: done.mdModules, tpl: 'modules', title: 'CLAUDE.md — modules folder', state: paths.modules.claudemd,
+      desc: 'The module playbook agents build with: the shell contract, WS streaming (no polling), render-verify, portable modules.',
+      action: paths.modules.claudemd === 'none' && <Button onClick={() => act('md-modules', '/action/claudemd', { target: 'modules' })} disabled={busy === 'md-modules' || !paths.modules.exists}>Install</Button>,
+    },
+    {
+      id: 'md-chromes', done: done.mdChromes, tpl: 'chromes', title: 'CLAUDE.md — chromes folder', state: paths.chromes.claudemd,
+      desc: 'Handle with care: everything here is cross-cutting, a chrome change ripples into every module at once.',
+      action: paths.chromes.claudemd === 'none' && <Button onClick={() => act('md-chromes', '/action/claudemd', { target: 'chromes' })} disabled={busy === 'md-chromes' || !paths.chromes.exists}>Install</Button>,
+    },
+  ]
+
+  return (
+    <div className="mx-auto max-w-4xl text-zinc-950 dark:text-white">
+      <header>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-600/90 dark:text-blue-400/90">Agent MD</div>
+        <h1 className="mt-1.5 text-[30px] font-semibold leading-none tracking-tight">Three folders, three jobs</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+          The layout this collection is built with. An agent building a feature holds <span className="font-medium text-zinc-900 dark:text-white">one module</span> in its
+          head — and physically can’t wreck the shell or restyle the whole system, because those live in folders its task never touches. Each folder carries a
+          <span className="font-medium text-zinc-900 dark:text-white"> CLAUDE.md playbook</span> so any agent that lands there already knows the rules. Works immediately after a fresh
+          install — and as the guided way to migrate an instance that’s been running for a while.
+        </p>
+      </header>
+
+      <div className="mt-8 grid gap-3 sm:grid-cols-3">
+        <FolderCard icon="settings-2" accent="#3b82f6" title="Instance" role="Runs it: config, .env, shell. The wiring — config edits only." p={paths.instance} mdState={paths.instance.claudemd} />
+        <FolderCard icon="blocks" accent="#10b981" title="Modules" role="Every module's working copy. The workshop — agents build here." p={paths.modules} mdState={paths.modules.claudemd} />
+        <FolderCard icon="palette" accent="#a855f7" title="Chromes" role="The themes. Cross-cutting — hands off from module tasks." p={paths.chromes} mdState={paths.chromes.claudemd} />
+      </div>
+
+      {!done.installPath && (
+        <div className="mt-4 rounded-2xl border border-dashed border-zinc-950/15 bg-zinc-950/[0.015] p-4 dark:border-white/15 dark:bg-white/[0.015]">
+          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-600 dark:text-zinc-300"><Icon name="folder-cog" size={15} /> Where should the folders live?</div>
+          <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">Anywhere outside the instance folder. The suggestions are siblings of it; edit before running the steps below.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-400">Modules folder</span>
+              <Input value={modPath ?? ''} onChange={(e) => setModPath(e.target.value)} placeholder="~/pro/my-atelier-modules" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-400">Chromes folder</span>
+              <Input value={chrPath ?? ''} onChange={(e) => setChrPath(e.target.value)} placeholder="~/pro/my-atelier-chromes" />
+            </label>
+          </div>
+        </div>
+      )}
+
+      {err && <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/[0.06] px-3 py-2 text-sm text-red-600 dark:text-red-400">{err}</p>}
+
+      <section className="mt-8">
+        <div className="mb-2 flex items-baseline justify-between gap-3 px-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-400 dark:text-zinc-500">Set it up — live against your instance</span>
+          {allDone && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400"><Icon name="sparkles" size={13} /> layout complete</span>}
+        </div>
+        <div className="divide-y divide-zinc-950/[0.06] overflow-hidden rounded-2xl border border-zinc-950/10 bg-white dark:divide-white/[0.06] dark:border-white/10 dark:bg-white/[0.02]">
+          {steps.map((s) => (
+            <div key={s.id} className="px-4 py-3.5">
+              <div className="flex items-start gap-3">
+                <StepDot done={s.done} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[13.5px] font-semibold text-zinc-950 dark:text-white">{s.title}</span>
+                    {s.state === 'present' && <MdChip state="present" />}
+                  </div>
+                  <p className="mt-0.5 text-xs leading-[1.5] text-zinc-500 dark:text-zinc-400">{s.desc}</p>
+                  {s.state === 'present' && !s.done && null}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {s.tpl && <button onClick={() => showTemplate(s.tpl)} className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-950/[0.05] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200">{preview && preview.name === s.tpl ? 'hide' : 'view'}</button>}
+                  {s.action}
+                </div>
+              </div>
+              {preview && s.tpl === preview.name && (
+                <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed text-zinc-300">{preview.content}</pre>
+              )}
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 px-1 text-[11px] leading-[1.6] text-zinc-400 dark:text-zinc-500">
+          An existing CLAUDE.md is never clobbered — installing backs it up next to the file, then appends the playbook below your rules.
+        </p>
+      </section>
+
+      <section className="mt-8">
+        <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-400 dark:text-zinc-500">Migration — what still lives in the wrong folder</div>
+        {migrating ? (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.05] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
+                <Icon name="move-right" size={16} /> {migration.toModules.length + migration.toChromes.length} to move · {migration.ok} already in place
+              </div>
+              <CopyBtn label="Copy the agent brief" copiedLabel="Brief copied" getText={async () => (await (await fetch(self.api + '/brief')).json()).brief} />
+            </div>
+            <div className="mt-3 space-y-1.5">
+              {[...migration.toModules.map((m) => ({ ...m, dest: paths.modules.path })), ...migration.toChromes.map((m) => ({ ...m, dest: paths.chromes.path }))].map((m) => (
+                <div key={m.ws + '/' + m.id} className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg bg-white/60 px-3 py-2 text-xs dark:bg-white/[0.04]">
+                  <Icon name={m.isChrome ? 'palette' : 'blocks'} size={13} className="text-zinc-400" />
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100">{m.id}</span>
+                  <span className="rounded bg-zinc-500/15 px-1 py-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">{m.ws}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-zinc-400 dark:text-zinc-500" title={m.dir}>{m.dir}</span>
+                  <span className="inline-flex items-center gap-1 font-mono text-[10.5px] text-amber-700 dark:text-amber-300"><Icon name="arrow-right" size={11} /> {m.dest}/</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] leading-[1.6] text-amber-700/80 dark:text-amber-300/70">
+              Moving folders on a running instance is deliberate work — copy the brief and hand it to an agent: it moves one module at a time, updates the config entry, and verifies each before the next.
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2.5 rounded-2xl border border-zinc-950/10 bg-white px-4 py-3 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-300">
+            <Icon name="check" size={15} className="text-emerald-500" /> Nothing to move — every mounted module and chrome lives where the layout says.
+            {migration.external.length > 0 && <span className="text-xs text-zinc-400 dark:text-zinc-500">({migration.external.length} linked from elsewhere — fine, that’s what path-mounts are for)</span>}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-8 mb-2 rounded-2xl border border-zinc-950/10 bg-zinc-950/[0.02] p-4 text-xs leading-[1.7] text-zinc-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-400">
+        <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-400 dark:text-zinc-500"><Icon name="terminal" size={13} /> Day one, after this</div>
+        Start an agent in the <span className="font-mono">{paths.modules.path}</span> folder and say what you want built — the CLAUDE.md there already carries the module contract.
+        New modules from collections land in the right folder by themselves (<span className="font-mono">npx atelier add …</span> reads <span className="font-mono">installPath</span>).
+        The instance folder stays quiet: config, env, shell — nothing an agent needs to touch to ship a feature.
+      </section>
+    </div>
+  )
+}
