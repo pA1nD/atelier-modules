@@ -88,6 +88,7 @@ export default function Module() {
   const [modPath, setModPath] = useState(null)   // null = follow the snapshot
   const [chrPath, setChrPath] = useState(null)
   const [preview, setPreview] = useState(null)   // { name, content }
+  const [customOpen, setCustomOpen] = useState(false)   // the 'define custom folders' disclosure
   const seeded = useRef(false)
 
   // Seed the editable paths once from the live snapshot; afterwards they're the user's.
@@ -163,15 +164,24 @@ export default function Module() {
         <FolderCard icon="palette" accent="#a855f7" title="Chromes" role="The themes. Cross-cutting — hands off from module tasks." p={paths.chromes} mdState={paths.chromes.claudemd} />
       </div>
 
+      {!(customOpen || dirty) && (
+        <button onClick={() => setCustomOpen(true)} className="mt-3 inline-flex cursor-pointer items-center gap-1.5 px-1 text-xs font-medium text-zinc-400 transition-colors hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300">
+          <Icon name="folder-cog" size={13} /> Define custom folders…
+        </button>
+      )}
+      {(customOpen || dirty) && (
       <div className="mt-4 rounded-2xl border border-dashed border-zinc-950/15 bg-zinc-950/[0.015] p-4 dark:border-white/15 dark:bg-white/[0.015]">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-600 dark:text-zinc-300"><Icon name="folder-cog" size={15} /> Where should the folders live?</div>
+          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-600 dark:text-zinc-300"><Icon name="folder-cog" size={15} /> Define custom folders</div>
           {dirty
             ? <span className="inline-flex items-center gap-2">
                 <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">override pending — re-run the steps below</span>
                 <button onClick={resetPaths} className="cursor-pointer text-[11px] font-medium text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline dark:hover:text-zinc-200">reset</button>
               </span>
-            : done.installPath && <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">wired via installPath</span>}
+            : <span className="inline-flex items-center gap-2">
+                {done.installPath && <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">wired via installPath</span>}
+                <button onClick={() => setCustomOpen(false)} className="cursor-pointer text-[11px] font-medium text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline dark:hover:text-zinc-200">close</button>
+              </span>}
         </div>
         <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">Anywhere outside the instance folder — each is a manual override: edit a path, then re-run “Create folders” and “{done.installPath ? 'Update' : 'Wire'} installPath” to apply it.</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -185,6 +195,7 @@ export default function Module() {
           </label>
         </div>
       </div>
+      )}
 
       {err && <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/[0.06] px-3 py-2 text-sm text-red-600 dark:text-red-400">{err}</p>}
 
