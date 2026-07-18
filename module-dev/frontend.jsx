@@ -100,6 +100,7 @@ export default function Module() {
     try {
       const r = await (await fetch(self.api + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })).json()
       if (r.error) setErr(r.error)
+      else if (id === 'installpath') { seeded.current = false; setModPath(null); setChrPath(null) }   // re-sync inputs to the new wiring
       return r
     } catch (e) { setErr(String(e)); return null } finally { setBusy(null) }
   }, [])
@@ -113,6 +114,10 @@ export default function Module() {
 
   const { paths, migration, done } = snap
   const pathsBody = { modules: modPath ?? paths.modules.path, chromes: chrPath ?? paths.chromes.path }
+  // manual override: the inputs may point somewhere other than what's wired —
+  // then the folder/installPath steps re-activate to apply the new paths
+  const dirty = pathsBody.modules !== paths.modules.path || pathsBody.chromes !== paths.chromes.path
+  const resetPaths = () => { setModPath(paths.modules.path); setChrPath(paths.chromes.path) }
   const migrating = migration.toModules.length + migration.toChromes.length > 0
   const allDone = done.folders && done.installPath && done.mdInstance && done.mdChromes && done.migration
 
@@ -120,12 +125,12 @@ export default function Module() {
     {
       id: 'folders', done: done.folders, title: 'Create the modules & chromes folders',
       desc: 'Two folders OUTSIDE the instance — the workshop and the theme shelf. Existing folders are left as they are.',
-      action: !done.folders && <Button onClick={() => act('folders', '/action/folders', pathsBody)} disabled={busy === 'folders'}>Create folders</Button>,
+      action: (!done.folders || dirty) && <Button onClick={() => act('folders', '/action/folders', pathsBody)} disabled={busy === 'folders'}>Create folders</Button>,
     },
     {
       id: 'installpath', done: done.installPath, title: 'Wire installPath in atelier.config.json',
       desc: 'Points the installer at the layout: `atelier add` drops new modules into the modules folder and chromes into the chromes folder, automatically.',
-      action: !done.installPath && <Button onClick={() => act('installpath', '/action/installpath', pathsBody)} disabled={busy === 'installpath' || !done.folders}>Wire installPath</Button>,
+      action: (!done.installPath || dirty) && <Button onClick={() => act('installpath', '/action/installpath', pathsBody)} disabled={busy === 'installpath'}>{done.installPath ? 'Update installPath' : 'Wire installPath'}</Button>,
     },
     {
       id: 'md-instance', done: done.mdInstance, tpl: 'instance', title: 'CLAUDE.md — instance folder', state: paths.instance.claudemd,
@@ -158,22 +163,28 @@ export default function Module() {
         <FolderCard icon="palette" accent="#a855f7" title="Chromes" role="The themes. Cross-cutting — hands off from module tasks." p={paths.chromes} mdState={paths.chromes.claudemd} />
       </div>
 
-      {!done.installPath && (
-        <div className="mt-4 rounded-2xl border border-dashed border-zinc-950/15 bg-zinc-950/[0.015] p-4 dark:border-white/15 dark:bg-white/[0.015]">
+      <div className="mt-4 rounded-2xl border border-dashed border-zinc-950/15 bg-zinc-950/[0.015] p-4 dark:border-white/15 dark:bg-white/[0.015]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-semibold text-zinc-600 dark:text-zinc-300"><Icon name="folder-cog" size={15} /> Where should the folders live?</div>
-          <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">Anywhere outside the instance folder. The suggestions are siblings of it; edit before running the steps below.</p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-400">Modules folder</span>
-              <Input value={modPath ?? ''} onChange={(e) => setModPath(e.target.value)} placeholder="~/pro/002-my-atelier-modules" />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-400">Chromes folder</span>
-              <Input value={chrPath ?? ''} onChange={(e) => setChrPath(e.target.value)} placeholder="~/pro/001-my-atelier-chromes" />
-            </label>
-          </div>
+          {dirty
+            ? <span className="inline-flex items-center gap-2">
+                <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">override pending — re-run the steps below</span>
+                <button onClick={resetPaths} className="cursor-pointer text-[11px] font-medium text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline dark:hover:text-zinc-200">reset</button>
+              </span>
+            : done.installPath && <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">wired via installPath</span>}
         </div>
-      )}
+        <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">Anywhere outside the instance folder — each is a manual override: edit a path, then re-run “Create folders” and “{done.installPath ? 'Update' : 'Wire'} installPath” to apply it.</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-400">Modules folder{pathsBody.modules !== paths.modules.path && <span className="ml-1.5 normal-case text-amber-500">· changed</span>}</span>
+            <Input value={modPath ?? ''} onChange={(e) => setModPath(e.target.value)} placeholder="~/pro/002-my-atelier-modules" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-400">Chromes folder{pathsBody.chromes !== paths.chromes.path && <span className="ml-1.5 normal-case text-amber-500">· changed</span>}</span>
+            <Input value={chrPath ?? ''} onChange={(e) => setChrPath(e.target.value)} placeholder="~/pro/001-my-atelier-chromes" />
+          </label>
+        </div>
+      </div>
 
       {err && <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/[0.06] px-3 py-2 text-sm text-red-600 dark:text-red-400">{err}</p>}
 
