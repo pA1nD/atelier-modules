@@ -173,15 +173,17 @@ export default {
     }
     const tickNow = () => { tick(true).catch(() => {}) }
     slot.watchBusy = false   // reset the guard on every mount — a reload mid-probe must never strand it
-    const watchTimer = setInterval(() => { tick().catch(() => {}) }, 4000)
+    if (slot.watchTimer) clearInterval(slot.watchTimer)   // an async mountRoutes' teardown is dropped by the shell — never stack watchers
+    slot.watchTimer = setInterval(() => { tick().catch(() => {}) }, 4000)
 
     // heal.log push — the launcher appends incidents; watch the dir (survives
     // atomic saves, works before the file exists) and push the parsed tail.
     const HEAL_DIR = path.join(HOME, '.config', 'horse-browser')
+    if (slot.healWatcher) { try { slot.healWatcher.close() } catch {} }
     let healTimer = null
     let healWatcher = null
     try {
-      healWatcher = fs.watch(HEAL_DIR, (_ev, name) => {
+      healWatcher = slot.healWatcher = fs.watch(HEAL_DIR, (_ev, name) => {
         if (name !== 'heal.log') return
         clearTimeout(healTimer)
         healTimer = setTimeout(() => ctx.broadcast({ type: 'heal-log', log: healLog() }), 300)
@@ -248,7 +250,7 @@ export default {
 
     // Teardown: stop the watcher + heal-log watch, kill installer children.
     return () => {
-      clearInterval(watchTimer)
+      if (slot.watchTimer) { clearInterval(slot.watchTimer); slot.watchTimer = null }
       clearTimeout(healTimer)
       try { healWatcher && healWatcher.close() } catch {}
       for (const c of slot.children) {
