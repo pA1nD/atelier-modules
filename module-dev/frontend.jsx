@@ -1,4 +1,4 @@
-// Floorplan — the three-folder layout for serious agent development, as a page:
+// Module Development — the three-folder layout for serious agent development, as a page:
 // the story (instance / modules / chromes, one job each), a live checklist that
 // reads YOUR instance (folders, installPath wiring, the three CLAUDE.md
 // playbooks — honest states: ours / yours / none), and a migration scan with a
@@ -8,7 +8,7 @@
 import { Button, Input, Heading, Text } from '@atelier/kit'
 import { ICONS } from './icons.js'
 
-export const meta = { name: 'Floorplan', icon: 'folder-tree', chrome: 'catalyst-chrome' }
+export const meta = { name: 'Module Development', icon: 'folder-tree', chrome: 'catalyst-chrome' }
 
 const { useState, useEffect, useCallback, useRef } = React
 const cn = (...p) => p.filter(Boolean).join(' ')
@@ -69,7 +69,7 @@ function FolderCard({ icon, accent, title, role, p, mdState, children }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold text-zinc-950 dark:text-white">{title}</span>
             {p && (p.exists === undefined || p.exists
-              ? <MdChip state={mdState} />
+              ? (mdState ? <MdChip state={mdState} /> : null)
               : <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">folder missing</span>)}
           </div>
           <p className="mt-0.5 text-xs leading-[1.5] text-zinc-500 dark:text-zinc-400">{role}</p>
@@ -114,7 +114,7 @@ export default function Module() {
   const { paths, migration, done } = snap
   const pathsBody = { modules: modPath ?? paths.modules.path, chromes: chrPath ?? paths.chromes.path }
   const migrating = migration.toModules.length + migration.toChromes.length > 0
-  const allDone = done.folders && done.installPath && done.mdInstance && done.mdModules && done.mdChromes && done.migration
+  const allDone = done.folders && done.installPath && done.mdInstance && done.mdChromes && done.migration
 
   const steps = [
     {
@@ -129,13 +129,8 @@ export default function Module() {
     },
     {
       id: 'md-instance', done: done.mdInstance, tpl: 'instance', title: 'CLAUDE.md — instance folder', state: paths.instance.claudemd,
-      desc: 'The wiring, not the workshop: the folder map, the config as the single wiring point, hands off the shell.',
+      desc: 'The layout map + the full module playbook: the shell contract, WS streaming (no polling), render-verify, portable modules.',
       action: paths.instance.claudemd === 'none' && <Button onClick={() => act('md-instance', '/action/claudemd', { target: 'instance' })} disabled={busy === 'md-instance'}>Install</Button>,
-    },
-    {
-      id: 'md-modules', done: done.mdModules, tpl: 'modules', title: 'CLAUDE.md — modules folder', state: paths.modules.claudemd,
-      desc: 'The module playbook agents build with: the shell contract, WS streaming (no polling), render-verify, portable modules.',
-      action: paths.modules.claudemd === 'none' && <Button onClick={() => act('md-modules', '/action/claudemd', { target: 'modules' })} disabled={busy === 'md-modules' || !paths.modules.exists}>Install</Button>,
     },
     {
       id: 'md-chromes', done: done.mdChromes, tpl: 'chromes', title: 'CLAUDE.md — chromes folder', state: paths.chromes.claudemd,
@@ -147,19 +142,19 @@ export default function Module() {
   return (
     <div className="mx-auto max-w-4xl text-zinc-950 dark:text-white">
       <header>
-        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-600/90 dark:text-blue-400/90">Floorplan</div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-600/90 dark:text-blue-400/90">Module Development</div>
         <h1 className="mt-1.5 text-[30px] font-semibold leading-none tracking-tight">Three folders, three jobs</h1>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
           The layout this collection is built with. An agent building a feature holds <span className="font-medium text-zinc-900 dark:text-white">one module</span> in its
-          head — and physically can’t wreck the shell or restyle the whole system, because those live in folders its task never touches. Each folder carries a
-          <span className="font-medium text-zinc-900 dark:text-white"> CLAUDE.md playbook</span> so any agent that lands there already knows the rules. Works immediately after a fresh
+          head — and physically can’t wreck the shell or restyle the whole system, because those live in folders its task never touches. The instance and chromes folders carry
+          <span className="font-medium text-zinc-900 dark:text-white"> CLAUDE.md playbooks</span> so any agent that lands there already knows the rules — the modules folder stays clean, it’s just a container. Works immediately after a fresh
           install — and as the guided way to migrate an instance that’s been running for a while.
         </p>
       </header>
 
       <div className="mt-8 grid gap-3 sm:grid-cols-3">
         <FolderCard icon="settings-2" accent="#3b82f6" title="Instance" role="Runs it: config, .env, shell. The wiring — config edits only." p={paths.instance} mdState={paths.instance.claudemd} />
-        <FolderCard icon="blocks" accent="#10b981" title="Modules" role="Every module's working copy. The workshop — agents build here." p={paths.modules} mdState={paths.modules.claudemd} />
+        <FolderCard icon="blocks" accent="#10b981" title="Modules" role="One subfolder per module — agents build in those. The folder itself is just a container; it carries no rules file." p={paths.modules} mdState={undefined} />
         <FolderCard icon="palette" accent="#a855f7" title="Chromes" role="The themes. Cross-cutting — hands off from module tasks." p={paths.chromes} mdState={paths.chromes.claudemd} />
       </div>
 
@@ -170,11 +165,11 @@ export default function Module() {
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-400">Modules folder</span>
-              <Input value={modPath ?? ''} onChange={(e) => setModPath(e.target.value)} placeholder="~/pro/my-atelier-modules" />
+              <Input value={modPath ?? ''} onChange={(e) => setModPath(e.target.value)} placeholder="~/pro/002-my-atelier-modules" />
             </label>
             <label className="block">
               <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-400">Chromes folder</span>
-              <Input value={chrPath ?? ''} onChange={(e) => setChrPath(e.target.value)} placeholder="~/pro/my-atelier-chromes" />
+              <Input value={chrPath ?? ''} onChange={(e) => setChrPath(e.target.value)} placeholder="~/pro/001-my-atelier-chromes" />
             </label>
           </div>
         </div>

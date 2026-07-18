@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fillTemplate, claudeMdState, installClaudeMd } from '../backend.js'
+import { fillTemplate, claudeMdState, installClaudeMd, suggestDirs } from '../backend.js'
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'floorplan-test-'))
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'module-dev-test-'))
 
 test('fillTemplate replaces every placeholder', () => {
   const out = fillTemplate('a {{INSTANCE}} b {{MODULES}} c {{CHROMES}} d {{PORT}} e {{INSTANCE}}',
@@ -20,14 +20,14 @@ test('claudeMdState: none / present / ours', () => {
   assert.equal(claudeMdState(f), 'none')
   fs.writeFileSync(f, '# My own rules\n')
   assert.equal(claudeMdState(f), 'present')
-  fs.writeFileSync(f, '<!-- atelier-floorplan: x v1 -->\n# Ours\n')
+  fs.writeFileSync(f, '<!-- atelier-module-dev: x v1 -->\n# Ours\n')
   assert.equal(claudeMdState(f), 'ours')
 })
 
 test('installClaudeMd writes fresh, appends with backup, no-ops on ours', () => {
   const d = tmp()
   const f = path.join(d, 'CLAUDE.md')
-  const block = '<!-- atelier-floorplan: t v1 -->\n# Playbook\n'
+  const block = '<!-- atelier-module-dev: t v1 -->\n# Playbook\n'
 
   const r1 = installClaudeMd(f, block)
   assert.equal(r1.mode, 'written')
@@ -49,4 +49,10 @@ test('installClaudeMd writes fresh, appends with backup, no-ops on ours', () => 
   const txt = fs.readFileSync(g, 'utf8')
   assert.ok(txt.startsWith('# Existing rules\n'))
   assert.ok(txt.includes('# Playbook'))
+})
+
+test('suggestDirs: numbered siblings, installPath-independent', () => {
+  const s = suggestDirs('/home/u/my-studio')
+  assert.equal(s.modules, '/home/u/002-my-studio-modules')
+  assert.equal(s.chromes, '/home/u/001-my-studio-chromes')
 })

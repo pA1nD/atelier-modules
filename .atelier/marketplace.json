@@ -2,7 +2,7 @@
   "id": "atelier-modules",
   "name": "Atelier Modules",
   "label": "Atelier Modules",
-  "description": "Eight apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console with its HB Auth and HB Display wings, CLAUDE.md, gwx, the Atelier Config settings panel, and Floorplan, the three-folder layout for serious agent development — plus catalyst-chrome, the theme they render in.",
+  "description": "Eight apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console with its HB Auth and HB Display wings, CLAUDE.md, gwx, the Atelier Config settings panel, and Module Development, the three-folder setup for building modules — plus catalyst-chrome, the theme they render in.",
   "apps": [
     {
       "id": "statusbar",
@@ -124,12 +124,12 @@
       "screenshots": []
     },
     {
-      "id": "floorplan",
-      "name": "Floorplan",
+      "id": "module-dev",
+      "name": "Module Development",
       "icon": "folder-tree",
-      "tagline": "Three folders, three jobs — the layout agents can't wreck.",
+      "tagline": "Set up for serious module development — three folders, three jobs.",
       "category": "Developer Tools",
-      "description": "**The three-folder layout for serious agent development, installed.** Instance folder (the wiring: config, .env, shell), modules folder (the workshop — agents build here), chromes folder (the themes — hands off from module tasks). Each gets its own CLAUDE.md playbook, filled with YOUR instance's real paths — existing files are backed up and appended to, never clobbered, and every template is previewable first. A live checklist reads your instance (folders, installPath wiring, playbook states, honestly reported), and a migration scan lists what still lives in the wrong folder with a copyable step-by-step agent brief. Works right after a fresh install — or as the guided migration for an instance that's been running for a while.",
+      "description": "**Set your instance up for serious module development.** Instance folder (the wiring: config, .env, shell), modules folder (the workshop — agents build here), chromes folder (the themes — hands off from module tasks). The instance and chromes folders get CLAUDE.md playbooks (the modules folder stays clean — it’s just a container), filled with YOUR instance's real paths — existing files are backed up and appended to, never clobbered, and every template is previewable first. A live checklist reads your instance (folders, installPath wiring, playbook states, honestly reported), and a migration scan lists what still lives in the wrong folder with a copyable step-by-step agent brief. Works right after a fresh install — or as the guided migration for an instance that's been running for a while.",
       "tags": [
         "atelier",
         "claude-code",
