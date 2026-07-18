@@ -150,6 +150,26 @@ export default {
     /* ── instruments ── */
     router.get('/snapshot', async (req, res) => res.json(await snapshot()))
 
+    /* ── the live push — the shell WS is the realtime channel, so the poll lives
+     *    HERE, server-side, once for all viewers: recompute every few seconds,
+     *    broadcast a full snapshot frame ONLY on change. Clients fetch once on
+     *    mount, then just listen; an idle machine sends no frames. */
+    const snapKey = (s) => JSON.stringify(({ ...s, now: 0 }))
+    const tick = async (force = false) => {
+      if (slot.watchBusy) return
+      slot.watchBusy = true
+      try {
+        const s = await snapshot()
+        const k = snapKey(s)
+        if (force || k !== slot.lastSnapKey) { slot.lastSnapKey = k; ctx.broadcast({ type: 'snapshot', snapshot: s }) }
+      } catch {}
+      finally { slot.watchBusy = false }
+    }
+    const tickNow = () => { tick(true).catch(() => {}) }
+    if (slot.watchTimer) clearInterval(slot.watchTimer)   // an async mountRoutes' teardown is dropped by the shell — never stack watchers
+    slot.watchTimer = setInterval(() => { tick().catch(() => {}) }, 5000)
+
+
     // the rewritten gws workflow skills gwx ships (cached locally) — for the "explore all" modal
     router.get('/gwx/skills', (req, res) => {
       const skills = []
@@ -191,7 +211,7 @@ export default {
           const bin = findOnPath('gwx')
           if (!bin) { emit(id, 'gwx not installed', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
           const r = await runStreaming(id, bin, ['whoami'], { env: { GWX_TIMEOUT: '15' } })
-          ctx.broadcast({ type: 'snapshot-dirty' })
+          tickNow()
           return res.json(r)
         }
         case 'install-gwx': {
@@ -199,7 +219,7 @@ export default {
           const npm = findOnPath('npm')
           if (!npm) { emit(id, 'npm not found — install Node.js first (https://nodejs.org)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
           const r = await runStreaming(id, npm, ['install', '-g', '@pa1nd/gwx@latest'])
-          verBust(); ctx.broadcast({ type: 'snapshot-dirty' })
+          verBust(); tickNow()
           return res.json(r)
         }
         default:
@@ -213,6 +233,7 @@ export default {
     // Children are spawned detached (own process group) so we can take the
     // whole group down — no orphaned `curl` grandchild left behind by `curl | bash`.
     return () => {
+      if (slot.watchTimer) { clearInterval(slot.watchTimer); slot.watchTimer = null }
       for (const c of slot.children) {
         try { process.kill(-c.pid, 'SIGTERM') } catch {}
         try { c.kill('SIGTERM') } catch {}
