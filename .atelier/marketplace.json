@@ -2,7 +2,7 @@
   "id": "atelier-modules",
   "name": "Atelier Modules",
   "label": "Atelier Modules",
-  "description": "Six apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console with its HB Auth and HB Display wings, CLAUDE.md, and gwx — plus catalyst-chrome, the theme they render in.",
+  "description": "Seven apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console with its HB Auth and HB Display wings, CLAUDE.md, gwx, and the Atelier Config settings panel — plus catalyst-chrome, the theme they render in.",
   "apps": [
     {
       "id": "statusbar",
@@ -72,6 +72,18 @@
       "category": "Developer Tools",
       "description": "**The Horse Browser's display & health wing.** With the display asleep — especially clamshell — WindowServer composites nothing and agent screenshots hang. This page answers the headline question with a REAL probe (a timed 1×1 CDP screenshot), shows the display census (asleep / clamshell / virtual displays), installs and launches DeskPad (audited: 436 lines, sandboxed, no network entitlement) for a virtual display that never sleeps, and streams the launcher's self-heal journal live. macOS only.",
       "tags": ["claude-code", "display", "screenshots", "deskpad", "horse-browser"],
+      "homepage": null,
+      "author": null,
+      "screenshots": []
+    },
+    {
+      "id": "atelier-config",
+      "name": "Atelier Config",
+      "icon": "settings-2",
+      "tagline": "Your whole instance, edited from inside it.",
+      "category": "Developer Tools",
+      "description": "**The instance's settings panel.** atelier.config.json as a friendly form or a highlighted raw-JSON editor — saves are staged, shape-validated, written atomically, and patch-merged so a concurrent edit is never clobbered (a drifted key rejects as a conflict instead). Manage apps & workspaces by drag-and-drop (link/unlink path-mounts, create/rename/delete workspaces, chrome-coloured lanes), check the system's package managers against the latest LTS / stable upstream, run the instance at login as a macOS LaunchAgent (with a guided port handoff from your dev server), and watch the server's real output stream live. No client polling — launchd state and log tails arrive over the shell WebSocket.",
+      "tags": ["atelier", "settings", "config", "workspaces", "launchd"],
       "homepage": null,
       "author": null,
       "screenshots": []
