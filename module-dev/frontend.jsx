@@ -140,6 +140,26 @@ function DiffView({ rows }) {
   )
 }
 
+function Modal({ title, onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-zinc-950/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-zinc-900">
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-950/10 px-5 py-3.5 dark:border-white/10">
+          <span className="flex items-center gap-2 text-[13px] font-semibold text-zinc-950 dark:text-zinc-50"><Icon name="file-text" size={15} /> {title}</span>
+          <button onClick={onClose} className="cursor-pointer rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-950/[0.06] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200"><Icon name="x" size={16} /></button>
+        </div>
+        <div className="flex-1 overflow-auto px-6 py-5">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 function CopyBtn({ getText, label = 'Copy', copiedLabel = 'Copied' }) {
   const [ok, setOk] = useState(false)
   const copy = async () => {
@@ -200,11 +220,9 @@ export default function Module() {
   }, [])
 
   const showTemplate = async (name) => {
-    if (preview && preview.name === name && preview.mode === 'md') { setPreview(null); return }
     try { setPreview({ ...(await (await fetch(self.api + '/template/' + name)).json()), mode: 'md' }) } catch {}
   }
   const showDiff = async (name) => {
-    if (preview && preview.name === name && preview.mode === 'diff') { setPreview(null); return }
     try { setPreview({ ...(await (await fetch(self.api + '/claudemd-diff/' + name)).json()), name, mode: 'diff' }) } catch {}
   }
 
@@ -233,12 +251,16 @@ export default function Module() {
     {
       id: 'md-instance', done: done.mdInstance, tpl: 'instance', title: 'CLAUDE.md — instance folder', state: paths.instance.claudemd,
       desc: 'The layout map + the full module playbook: the shell contract, WS streaming (no polling), render-verify, portable modules.',
-      action: paths.instance.claudemd !== 'ours' && <Button onClick={() => act('md-instance', '/action/claudemd', { target: 'instance' })} disabled={busy === 'md-instance'}>{paths.instance.claudemd === 'none' ? 'Install' : paths.instance.claudemd === 'ours-stale' ? 'Update' : 'Append'}</Button>,
+      action: paths.instance.claudemd === 'none' ? <Button onClick={() => act('md-instance', '/action/claudemd', { target: 'instance' })} disabled={busy === 'md-instance'}>Install</Button>
+        : paths.instance.claudemd === 'ours-stale' ? <Button onClick={() => act('md-instance', '/action/claudemd', { target: 'instance' })} disabled={busy === 'md-instance'}>Update</Button>
+        : paths.instance.claudemd === 'present' ? <button onClick={() => act('md-instance', '/action/claudemd', { target: 'instance' })} disabled={busy === 'md-instance'} title="Backs your file up, then adds the playbook below your rules — optional; your own CLAUDE.md is a perfectly fine state." className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-950/[0.05] hover:text-zinc-700 disabled:opacity-50 dark:hover:bg-white/10 dark:hover:text-zinc-200">append ours</button> : null,
     },
     {
       id: 'md-chromes', done: done.mdChromes, tpl: 'chromes', title: 'CLAUDE.md — chromes folder', state: paths.chromes.claudemd,
       desc: 'Handle with care: everything here is cross-cutting, a chrome change ripples into every module at once.',
-      action: paths.chromes.claudemd !== 'ours' && <Button onClick={() => act('md-chromes', '/action/claudemd', { target: 'chromes' })} disabled={busy === 'md-chromes' || !paths.chromes.exists}>{paths.chromes.claudemd === 'none' ? 'Install' : paths.chromes.claudemd === 'ours-stale' ? 'Update' : 'Append'}</Button>,
+      action: paths.chromes.claudemd === 'none' ? <Button onClick={() => act('md-chromes', '/action/claudemd', { target: 'chromes' })} disabled={busy === 'md-chromes' || !paths.chromes.exists}>Install</Button>
+        : paths.chromes.claudemd === 'ours-stale' ? <Button onClick={() => act('md-chromes', '/action/claudemd', { target: 'chromes' })} disabled={busy === 'md-chromes'}>Update</Button>
+        : paths.chromes.claudemd === 'present' ? <button onClick={() => act('md-chromes', '/action/claudemd', { target: 'chromes' })} disabled={busy === 'md-chromes'} title="Backs your file up, then adds the playbook below your rules — optional; your own CLAUDE.md is a perfectly fine state." className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-950/[0.05] hover:text-zinc-700 disabled:opacity-50 dark:hover:bg-white/10 dark:hover:text-zinc-200">append ours</button> : null,
     },
   ]
 
@@ -315,21 +337,11 @@ export default function Module() {
                   {s.state === 'present' && !s.done && null}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {s.tpl && <button onClick={() => showTemplate(s.tpl)} className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-950/[0.05] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200">{preview && preview.name === s.tpl && preview.mode === 'md' ? 'hide' : 'view'}</button>}
-                  {s.tpl && (s.state === 'present' || s.state === 'ours-stale') && <button onClick={() => showDiff(s.tpl)} className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-amber-600/80 transition-colors hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-400/80 dark:hover:text-amber-300">{preview && preview.name === s.tpl && preview.mode === 'diff' ? 'hide diff' : 'diff'}</button>}
+                  {s.tpl && <button onClick={() => showTemplate(s.tpl)} className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-950/[0.05] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200">view</button>}
+                  {s.tpl && (s.state === 'present' || s.state === 'ours-stale') && <button onClick={() => showDiff(s.tpl)} className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-amber-600/80 transition-colors hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-400/80 dark:hover:text-amber-300">diff</button>}
                   {s.action}
                 </div>
               </div>
-              {preview && s.tpl === preview.name && preview.mode === 'md' && (
-                <div className="mt-3 max-h-96 overflow-auto rounded-xl border border-zinc-950/10 bg-white px-5 py-4 dark:border-white/10 dark:bg-zinc-900/60">
-                  <Markdown text={preview.content} />
-                </div>
-              )}
-              {preview && s.tpl === preview.name && preview.mode === 'diff' && (
-                <div className="mt-3 max-h-96 overflow-auto">
-                  <DiffView rows={preview.rows || []} />
-                </div>
-              )}
             </div>
           ))}
         </div>
@@ -370,6 +382,14 @@ export default function Module() {
           </div>
         )}
       </section>
+
+      {preview && (
+        <Modal
+          title={(preview.name === 'instance' ? 'CLAUDE.md — instance folder' : 'CLAUDE.md — chromes folder') + (preview.mode === 'diff' ? ' · what would change' : ' · the playbook')}
+          onClose={() => setPreview(null)}>
+          {preview.mode === 'diff' ? <DiffView rows={preview.rows || []} /> : <Markdown text={preview.content} />}
+        </Modal>
+      )}
 
       <section className="mt-8 mb-2 rounded-2xl border border-zinc-950/10 bg-zinc-950/[0.02] p-4 text-xs leading-[1.7] text-zinc-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-400">
         <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-400 dark:text-zinc-500"><Icon name="terminal" size={13} /> Day one, after this</div>
