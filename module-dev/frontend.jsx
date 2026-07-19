@@ -28,8 +28,16 @@ function Icon({ name, size = 16, strokeWidth = 1.75, className = '', style }) {
 function useSnapshot() {
   const [snap, setSnap] = useState(null)
   useEffect(() => {
-    fetch(self.api + '/snapshot').then((r) => r.json()).then(setSnap).catch(() => {})
-    return self.subscribe((f) => { if (f.type === 'snapshot' && f.snapshot) setSnap(f.snapshot) })
+    const load = () => fetch(self.api + '/snapshot').then((r) => r.json()).then(setSnap).catch(() => {})
+    load()
+    const unsub = self.subscribe((f) => { if (f.type === 'snapshot' && f.snapshot) setSnap(f.snapshot) })
+    // presence heartbeat: keeps the backend's watcher awake only while a tab is
+    // actually open AND visible; a hidden tab lets it go idle within ~90s
+    const beat = () => { if (!document.hidden) fetch(self.api + '/watching', { method: 'POST' }).catch(() => {}) }
+    const t = setInterval(beat, 45000)
+    const onVis = () => { if (!document.hidden) { beat(); load() } }   // returning tab catches up instantly
+    document.addEventListener('visibilitychange', onVis)
+    return () => { unsub(); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [])
   return snap
 }

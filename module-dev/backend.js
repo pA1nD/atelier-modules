@@ -55,6 +55,13 @@ export function claudeMdState(file, expected) {
   return txt.slice(start).trim() === expected.trim() ? 'ours' : 'ours-stale'
 }
 
+// Watch gate: the backend scans only while some tab marked itself watching
+// recently (GET /snapshot on mount + a 45s presence heartbeat while visible).
+// An unwatched instance's timer still fires, but does no work at all.
+export function isWatched(watchedAt, now, ttlMs = 90000) {
+  return now - (watchedAt || 0) <= ttlMs
+}
+
 // Suggested default folders: numbered siblings of the instance, so they sort
 // next to it in a sensible order — 001 chromes (rarely touched), 002 modules
 // (the workshop). Only a suggestion: installPath, when set, always wins.
@@ -178,12 +185,17 @@ export default {
       return s
     }
 
-    router.get('/snapshot', (req, res) => res.json(snapshot()))
+    const markWatched = () => { slot.watchedAt = Date.now() }
+    router.get('/snapshot', (req, res) => { markWatched(); res.json(snapshot()) })
+    // presence heartbeat from open, visible tabs — a client→server write (the
+    // shell WS can't carry client frames), NOT state polling
+    router.post('/watching', (req, res) => { markWatched(); res.json({ ok: true }) })
 
     /* live push — one server-side watcher for all viewers: tick, diff,
      * broadcast only on change; actions force a tick. */
     const snapKey = (s) => JSON.stringify({ ...s, now: 0 })
     const tick = (force = false) => {
+      if (!force && !isWatched(slot.watchedAt, Date.now())) return   // nobody watching → idle
       try {
         const s = snapshot()
         const k = snapKey(s)

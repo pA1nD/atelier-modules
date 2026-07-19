@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fillTemplate, claudeMdState, installClaudeMd, suggestDirs } from '../backend.js'
+import { fillTemplate, claudeMdState, installClaudeMd, suggestDirs, isWatched } from '../backend.js'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'module-dev-test-'))
 
@@ -85,4 +85,12 @@ test('drift: stale detection and block refresh preserve user content', () => {
   assert.ok(txt.startsWith('# My rules\n'))
   assert.ok(txt.includes('/new/path') && !txt.includes('/old/path'))
   assert.equal(claudeMdState(g, v2), 'ours')
+})
+
+test('isWatched: recent heartbeat keeps the watcher awake, silence idles it', () => {
+  const now = 1000000
+  assert.equal(isWatched(now - 1000, now), true)
+  assert.equal(isWatched(now - 90000, now), true)
+  assert.equal(isWatched(now - 90001, now), false)
+  assert.equal(isWatched(undefined, now), false)
 })
