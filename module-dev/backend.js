@@ -161,6 +161,7 @@ export default {
       const mdState = (dir, name) => claudeMdState(path.join(dir, 'CLAUDE.md'), expected(name))
       const s = {
         now: Date.now(),
+        lastTickAt: slot.lastTickAt || 0,
         instanceRoot: tilde(instanceRoot),
         port: ctx.port,
         paths: {
@@ -185,17 +186,18 @@ export default {
       return s
     }
 
+    // The snapshot GET is also the presence heartbeat: the frontend re-GETs it
+    // every 45s while visible (single-flight, fixed cadence), which stamps the
+    // watcher awake AND heals any frame the WS lost across a reconnect.
     const markWatched = () => { slot.watchedAt = Date.now() }
     router.get('/snapshot', (req, res) => { markWatched(); res.json(snapshot()) })
-    // presence heartbeat from open, visible tabs — a client→server write (the
-    // shell WS can't carry client frames), NOT state polling
-    router.post('/watching', (req, res) => { markWatched(); res.json({ ok: true }) })
 
     /* live push — one server-side watcher for all viewers: tick, diff,
      * broadcast only on change; actions force a tick. */
     const snapKey = (s) => JSON.stringify({ ...s, now: 0 })
     const tick = (force = false) => {
       if (!force && !isWatched(slot.watchedAt, Date.now())) return   // nobody watching → idle
+      slot.lastTickAt = Date.now()
       try {
         const s = snapshot()
         const k = snapKey(s)

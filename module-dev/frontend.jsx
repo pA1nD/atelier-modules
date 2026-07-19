@@ -25,19 +25,31 @@ function Icon({ name, size = 16, strokeWidth = 1.75, className = '', style }) {
   )
 }
 
+// Presence + freshness in ONE bounded loop: while the tab is VISIBLE, re-GET
+// the snapshot every 45s. That stamps the backend watcher awake (it idles
+// within 90s of the last GET) and heals any frame the WS lost across a
+// reconnect — so a visible tab is never older than ~45s even with total
+// socket loss. Flood-safe by construction: fixed cadence (failures never
+// speed it up), single-flight, 10s abort, hidden tabs send nothing, and the
+// visibility handler is throttled. WS reconnection itself is the shell's job.
 function useSnapshot() {
   const [snap, setSnap] = useState(null)
   useEffect(() => {
-    const load = () => fetch(self.api + '/snapshot').then((r) => r.json()).then(setSnap).catch(() => {})
+    let alive = true, busy = false, last = 0
+    const load = async () => {
+      if (busy) return
+      busy = true; last = Date.now()
+      try {
+        const r = await fetch(self.api + '/snapshot', { signal: AbortSignal.timeout(10000) })
+        if (alive && r.ok) setSnap(await r.json())
+      } catch {} finally { busy = false }
+    }
     load()
     const unsub = self.subscribe((f) => { if (f.type === 'snapshot' && f.snapshot) setSnap(f.snapshot) })
-    // presence heartbeat: keeps the backend's watcher awake only while a tab is
-    // actually open AND visible; a hidden tab lets it go idle within ~90s
-    const beat = () => { if (!document.hidden) fetch(self.api + '/watching', { method: 'POST' }).catch(() => {}) }
-    const t = setInterval(beat, 45000)
-    const onVis = () => { if (!document.hidden) { beat(); load() } }   // returning tab catches up instantly
+    const t = setInterval(() => { if (!document.hidden) load() }, 45000)
+    const onVis = () => { if (!document.hidden && Date.now() - last > 5000) load() }
     document.addEventListener('visibilitychange', onVis)
-    return () => { unsub(); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
+    return () => { alive = false; unsub(); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [])
   return snap
 }
