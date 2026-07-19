@@ -1,8 +1,7 @@
 {
   "name": "catalyst-chrome",
   "private": true,
-  "version": "0.2.1",
-  "license": "SEE LICENSE IN LICENSE",
+  "version": "0.2.2",
   "type": "module",
   "dependencies": {
     "@headlessui/react": "^2.2.10",
