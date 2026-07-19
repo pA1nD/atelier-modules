@@ -105,56 +105,82 @@ function Markdown({ text }) {
   return <div>{out}</div>
 }
 
-/* the diff view: '-' rows = only in your file · '+' rows = only in the playbook;
- * long unchanged runs collapse to a count so 'present' diffs stay readable */
+/* side-by-side diff — left: your file · right: the playbook. Reworded lines
+ * align as one row with word-level highlights; whitespace-only differences
+ * were already treated as unchanged by the backend; long unchanged runs
+ * collapse to a count. */
+function Seg({ segs, text, tone }) {
+  if (!segs) return <>{text}</>
+  return <>{segs.map(([t, changed], i) => changed
+    ? <span key={i} className={tone === 'del' ? 'rounded-sm bg-red-500/25 text-red-200' : 'rounded-sm bg-emerald-500/25 text-emerald-200'}>{t}</span>
+    : <span key={i}>{t}</span>)}</>
+}
+
 function DiffView({ rows }) {
   const out = []
-  let i = 0, k = 0
+  let i = 0
   while (i < rows.length) {
-    if (rows[i].t !== ' ') { out.push(rows[i]); i++; continue }
+    if (rows[i].k !== 'same') { out.push(rows[i]); i++; continue }
     let j = i
-    while (j < rows.length && rows[j].t === ' ') j++
+    while (j < rows.length && rows[j].k === 'same') j++
     const run = j - i
     if (run > 7) {
       for (let x = i; x < i + 3; x++) out.push(rows[x])
-      out.push({ t: '…', s: `${run - 6} unchanged lines` })
+      out.push({ k: 'gap', n: run - 6 })
       for (let x = j - 3; x < j; x++) out.push(rows[x])
     } else for (let x = i; x < j; x++) out.push(rows[x])
     i = j
   }
+  const cell = 'whitespace-pre-wrap break-words px-2 py-px'
   return (
-    <div className="overflow-auto rounded-xl bg-zinc-950 p-3 font-mono text-[11.5px] leading-relaxed">
-      <div className="mb-2 flex gap-4 text-[10.5px] text-zinc-500">
-        <span><span className="text-red-400">− red</span> only in your file</span>
-        <span><span className="text-emerald-400">+ green</span> only in the playbook</span>
+    <div className="rounded-xl bg-zinc-950 p-3 font-mono text-[11.5px] leading-relaxed">
+      <div className="mb-2 grid grid-cols-2 gap-x-3 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-500">
+        <span>your file</span><span>the playbook</span>
       </div>
-      {out.map((r, idx) => (
-        <div key={idx} className={cn('whitespace-pre-wrap break-words px-1.5',
-          r.t === '+' ? 'bg-emerald-500/[0.13] text-emerald-300' :
-          r.t === '-' ? 'bg-red-500/[0.12] text-red-300' :
-          r.t === '…' ? 'py-0.5 text-center text-zinc-600' : 'text-zinc-400')}>
-          {r.t === '…' ? `· ${r.s} ·` : `${r.t === ' ' ? ' ' : r.t} ${r.s}`}
+      {out.map((r, idx) => r.k === 'gap' ? (
+        <div key={idx} className="py-1 text-center text-[10.5px] text-zinc-600">· {r.n} unchanged lines ·</div>
+      ) : (
+        <div key={idx} className="grid grid-cols-2 gap-x-3">
+          <div className={cn(cell,
+            r.k === 'same' ? 'text-zinc-500' :
+            r.k === 'mod' ? 'bg-red-500/[0.07] text-zinc-300' :
+            r.k === 'del' ? 'bg-red-500/[0.14] text-red-200' : 'text-zinc-800')}>
+            {r.l != null ? <Seg segs={r.lseg} text={r.l} tone="del" /> : ''}
+          </div>
+          <div className={cn(cell,
+            r.k === 'same' ? 'text-zinc-500' :
+            r.k === 'mod' ? 'bg-emerald-500/[0.07] text-zinc-300' :
+            r.k === 'add' ? 'bg-emerald-500/[0.14] text-emerald-200' : 'text-zinc-800')}>
+            {r.r != null ? <Seg segs={r.rseg} text={r.r} tone="add" /> : ''}
+          </div>
         </div>
       ))}
     </div>
   )
 }
 
-function Modal({ title, onClose, children }) {
+function Modal({ onClose, wide, children }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    // lock the page behind the modal — only the modal body scrolls. The chrome
+    // scrolls the ROOT element, not body, so both need the lock.
+    const prevHtml = document.documentElement.style.overflow
+    const prevBody = document.body.style.overflow
+    document.documentElement.style.overflow = 'hidden'
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.documentElement.style.overflow = prevHtml
+      document.body.style.overflow = prevBody
+    }
   }, [onClose])
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-zinc-950/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-zinc-900">
-        <div className="flex shrink-0 items-center justify-between border-b border-zinc-950/10 px-5 py-3.5 dark:border-white/10">
-          <span className="flex items-center gap-2 text-[13px] font-semibold text-zinc-950 dark:text-zinc-50"><Icon name="file-text" size={15} /> {title}</span>
-          <button onClick={onClose} className="cursor-pointer rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-950/[0.06] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200"><Icon name="x" size={16} /></button>
-        </div>
-        <div className="flex-1 overflow-auto px-6 py-5">{children}</div>
+      <div className={cn('relative flex h-[88vh] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-zinc-900', wide ? 'max-w-7xl' : 'max-w-4xl')}>
+        <button onClick={onClose} aria-label="Close" className="absolute right-3 top-3 z-10 cursor-pointer rounded-lg bg-white/80 p-1.5 text-zinc-400 shadow-sm ring-1 ring-zinc-950/10 backdrop-blur transition hover:text-zinc-700 dark:bg-zinc-900/80 dark:ring-white/10 dark:hover:text-zinc-200"><Icon name="x" size={16} /></button>
+        <div className="flex-1 overflow-auto px-6 py-6">{children}</div>
       </div>
     </div>
   )
@@ -384,10 +410,8 @@ export default function Module() {
       </section>
 
       {preview && (
-        <Modal
-          title={(preview.name === 'instance' ? 'CLAUDE.md — instance folder' : 'CLAUDE.md — chromes folder') + (preview.mode === 'diff' ? ' · what would change' : ' · the playbook')}
-          onClose={() => setPreview(null)}>
-          {preview.mode === 'diff' ? <DiffView rows={preview.rows || []} /> : <Markdown text={preview.content} />}
+        <Modal onClose={() => setPreview(null)} wide={preview.mode === 'diff'}>
+          {preview.mode === 'diff' ? <DiffView rows={preview.rows || []} /> : <div className="mx-auto max-w-2xl"><Markdown text={preview.content} /></div>}
         </Modal>
       )}
 

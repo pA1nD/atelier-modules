@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fillTemplate, claudeMdState, installClaudeMd, suggestDirs, isWatched, lineDiff } from '../backend.js'
+import { fillTemplate, claudeMdState, installClaudeMd, suggestDirs, isWatched, lineDiff, alignDiff } from '../backend.js'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'module-dev-test-'))
 
@@ -100,4 +100,19 @@ test('lineDiff: adds, removals, common core', () => {
   assert.deepEqual(rows.map(r => r.t + r.s), [' a', '-b', '+X', ' c'])
   assert.ok(lineDiff('', 'one\ntwo').every(r => r.t === '+' || r.s === ''))
   assert.deepEqual(lineDiff('same', 'same'), [{ t: ' ', s: 'same' }])
+})
+
+test('alignDiff: rewrap is same, reword is one mod row with word segs', () => {
+  // whitespace-only difference → same
+  assert.deepEqual(alignDiff('a  b', 'a b').map(r => r.k), ['same'])
+  // reworded line → ONE mod row, not del+add
+  const rows = alignDiff('keep\nthe quick brown fox\nkeep2', 'keep\nthe quick RED fox\nkeep2')
+  assert.deepEqual(rows.map(r => r.k), ['same', 'mod', 'same'])
+  const mod = rows[1]
+  assert.ok(mod.lseg.some(([t, c]) => c && t.includes('brown')))
+  assert.ok(mod.rseg.some(([t, c]) => c && t.includes('RED')))
+  assert.ok(mod.lseg.some(([t, c]) => !c && t.includes('quick')))
+  // pure insert / delete keep their sides
+  assert.deepEqual(alignDiff('x', 'x\nnew').map(r => r.k), ['same', 'add'])
+  assert.deepEqual(alignDiff('x\ngone', 'x').map(r => r.k), ['same', 'del'])
 })

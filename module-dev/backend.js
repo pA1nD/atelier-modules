@@ -76,6 +76,65 @@ export function lineDiff(aText, bText) {
   return rows
 }
 
+// Aligned side-by-side diff. Lines matching after whitespace normalization
+// count as SAME (a re-wrap is not a change); runs of removed/added lines are
+// paired in order into single 'mod' rows with word-level segments, so a
+// reworded line reads as one change, not a delete plus an insert.
+// Rows: { k: 'same'|'mod'|'del'|'add', l, r, lseg?, rseg? } — segs are
+// [text, changed] pairs.
+const normLine = (s) => String(s).replace(/\s+/g, ' ').trim()
+
+function wordSegs(a, b) {
+  const at = String(a).split(/(\s+)/), bt = String(b).split(/(\s+)/)
+  const n = at.length, m = bt.length
+  const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1))
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    L[i][j] = at[i] === bt[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1])
+  const ls = [], rs = []
+  const push = (arr, text, changed) => {
+    if (!text) return
+    const last = arr[arr.length - 1]
+    if (last && last[1] === changed) last[0] += text
+    else arr.push([text, changed])
+  }
+  let i = 0, j = 0
+  while (i < n && j < m) {
+    if (at[i] === bt[j]) { push(ls, at[i], false); push(rs, bt[j], false); i++; j++ }
+    else if (L[i + 1][j] >= L[i][j + 1]) { push(ls, at[i], true); i++ }
+    else { push(rs, bt[j], true); j++ }
+  }
+  while (i < n) { push(ls, at[i], true); i++ }
+  while (j < m) { push(rs, bt[j], true); j++ }
+  return { lseg: ls, rseg: rs }
+}
+
+export function alignDiff(aText, bText) {
+  const a = String(aText ?? '').split('\n'), b = String(bText ?? '').split('\n')
+  const an = a.map(normLine), bn = b.map(normLine)
+  const n = a.length, m = b.length
+  const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1))
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    L[i][j] = an[i] === bn[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1])
+  const rows = []
+  let i = 0, j = 0
+  const flush = (dels, adds) => {
+    const k = Math.min(dels.length, adds.length)
+    for (let x = 0; x < k; x++) rows.push({ k: 'mod', l: dels[x], r: adds[x], ...wordSegs(dels[x], adds[x]) })
+    for (let x = k; x < dels.length; x++) rows.push({ k: 'del', l: dels[x], r: null })
+    for (let x = k; x < adds.length; x++) rows.push({ k: 'add', l: null, r: adds[x] })
+  }
+  let dels = [], adds = []
+  while (i < n && j < m) {
+    if (an[i] === bn[j]) { flush(dels, adds); dels = []; adds = []; rows.push({ k: 'same', l: a[i], r: b[j] }); i++; j++ }
+    else if (L[i + 1][j] >= L[i][j + 1]) { dels.push(a[i]); i++ }
+    else { adds.push(b[j]); j++ }
+  }
+  while (i < n) dels.push(a[i++])
+  while (j < m) adds.push(b[j++])
+  flush(dels, adds)
+  return rows
+}
+
 // Watch gate: the backend scans only while some tab marked itself watching
 // recently (GET /snapshot on mount + a 45s presence heartbeat while visible).
 // An unwatched instance's timer still fires, but does no work at all.
@@ -310,7 +369,7 @@ export default {
       try { cur = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8') } catch {}
       const i = cur.indexOf(MARKER)
       const base = i !== -1 ? cur.slice(cur.lastIndexOf('\n', i) + 1) : cur
-      res.json({ target, state: claudeMdState(path.join(dir, 'CLAUDE.md'), expected), rows: lineDiff(base, expected) })
+      res.json({ target, state: claudeMdState(path.join(dir, 'CLAUDE.md'), expected), rows: alignDiff(base, expected) })
     })
 
     // Preview a filled template (the UI shows what would be written).
