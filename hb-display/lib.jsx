@@ -84,14 +84,30 @@ export function useDark() {
 }
 
 /* ───────────────────────── live-data hooks ───────────────────────────────── */
+// Presence + freshness in ONE bounded loop: while the tab is VISIBLE, the
+// snapshot is re-GET every 45s — that stamps the backend watcher awake (it
+// idles within 90s otherwise) and heals any frame the WS lost across a
+// reconnect. Flood-safe by construction: fixed cadence (failures never speed
+// it up), single-flight, 10s abort, hidden tabs send nothing.
 export function useSnapshot(self) {
   const [snap, setSnap] = useState(null)
-  const refresh = useCallback(() => {
-    fetch(self.api + '/snapshot').then((r) => r.json()).then(setSnap).catch(() => {})
+  const busyRef = useRef(false)
+  const lastRef = useRef(0)
+  const refresh = useCallback(async () => {
+    if (busyRef.current) return
+    busyRef.current = true; lastRef.current = Date.now()
+    try {
+      const r = await fetch(self.api + '/snapshot', { signal: AbortSignal.timeout(10000) })
+      if (r.ok) setSnap(await r.json())
+    } catch {} finally { busyRef.current = false }
   }, [self.api])
   useEffect(() => {
     refresh()
-    return self.subscribe((f) => { if (f.type === 'snapshot' && f.snapshot) setSnap(f.snapshot) })
+    const unsub = self.subscribe((f) => { if (f.type === 'snapshot' && f.snapshot) setSnap(f.snapshot) })
+    const t = setInterval(() => { if (!document.hidden) refresh() }, 45000)
+    const onVis = () => { if (!document.hidden && Date.now() - lastRef.current > 5000) refresh() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { unsub(); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [refresh])
   return { snap, refresh }
 }

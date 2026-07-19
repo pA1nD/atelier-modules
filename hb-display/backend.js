@@ -153,7 +153,8 @@ export default {
 
     /* ── instruments ── */
     const snapshot = async () => ({ now: Date.now(), deskpad: await deskpadInfo() })
-    router.get('/snapshot', async (req, res) => res.json(await snapshot()))
+    const markWatched = () => { slot.watchedAt = Date.now() }
+    router.get('/snapshot', async (req, res) => { markWatched(); res.json(await snapshot()) })
     router.get('/heal-log', (req, res) => res.json(healLog()))
 
     /* ── the live push — the shell WS is the realtime channel, so the poll lives
@@ -162,6 +163,7 @@ export default {
      *    mount, then just listen; an idle machine sends no frames. */
     const snapKey = (s) => JSON.stringify({ ...s, now: 0 })
     const tick = async (force = false) => {
+      if (!force && Date.now() - (slot.watchedAt || 0) > 90000) return   // nobody watching → idle (the 45s visible re-GET stamps us awake)
       if (slot.watchBusy) return
       slot.watchBusy = true
       try {
