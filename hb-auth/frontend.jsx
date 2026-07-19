@@ -452,9 +452,21 @@ function SourcesRow({ snap, navigate }) {
     return self.subscribe((f) => { if (f.type === 'sms' || f.type === 'sms-sync') load() })
   }, [])
   useEffect(() => {
-    fetch(API + '/broker/status').then((r) => r.json()).then(setBw).catch(() => setBw({ installed: false }))
-    // live: the backend's status watcher pushes broker-status on change
-    return self.subscribe((f) => { if (f.type === 'broker-status' && f.status) setBw(f.status) })
+    let busy = false, last = 0
+    const load = async () => {
+      if (busy) return
+      busy = true; last = Date.now()
+      try { const r = await fetch(API + '/broker/status', { signal: AbortSignal.timeout(10000) }); if (r.ok) setBw(await r.json()) }
+      catch { setBw((b) => b || { installed: false }) } finally { busy = false }
+    }
+    load()
+    // live: the backend's status watcher pushes broker-status on change; the 45s
+    // visible re-GET keeps it awake (it idles otherwise) + heals lost frames
+    const unsub = self.subscribe((f) => { if (f.type === 'broker-status' && f.status) setBw(f.status) })
+    const t = setInterval(() => { if (!document.hidden) load() }, 45000)
+    const onVis = () => { if (!document.hidden && Date.now() - last > 5000) load() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { unsub(); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [])
   const bwReady = !!(bw && bw.installed && bw.vault && bw.vault.hasSession && bw.vault.bwStatus !== 'no-cli' && bw.vault.bwStatus !== 'unauthenticated')
   const bwSummary = !bw ? 'checking…'
@@ -2064,10 +2076,17 @@ function BitwardenSource({ navigate }) {
   }, [])
 
   useEffect(() => { loadStatus(); loadPolicy(); loadAudit(); loadCachedGroups() }, [loadStatus, loadPolicy, loadAudit, loadCachedGroups])
-  useEffect(() => self.subscribe((f) => {
-    if (f.type === 'broker-status' && f.status) setStatus(f.status)                                 // pushed on change by the backend watcher
-    if (f.type === 'broker-audit' && f.event) setAudit((a) => [f.event, ...(a || [])].slice(0, 200))
-  }), [])
+  useEffect(() => {
+    const unsub = self.subscribe((f) => {
+      if (f.type === 'broker-status' && f.status) setStatus(f.status)                               // pushed on change by the backend watcher
+      if (f.type === 'broker-audit' && f.event) setAudit((a) => [f.event, ...(a || [])].slice(0, 200))
+    })
+    // 45s visible re-GET: presence for the backend watcher + staleness net
+    const t = setInterval(() => { if (!document.hidden) loadStatus() }, 45000)
+    const onVis = () => { if (!document.hidden) loadStatus() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { unsub(); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
+  }, [loadStatus])
 
   // The button rescans the live vault (unlock via the Keychain token, silent) and refreshes the cache.
   const loadGroups = async () => {

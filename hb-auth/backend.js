@@ -1268,11 +1268,13 @@ export default {
     // All non-secret. Policy writes are PROPOSED to the daemon, which applies
     // downgrades freely and demands Touch ID for any upgrade — so the module (and
     // an agent editing it) cannot silently self-promote a credential.
+    const markWatched = () => { brokerSlot.watchedAt = Date.now() }
     const brokerStatusPayload = async () => {
       const s = await brokerCall({ op: 'status', session: 'ui' })
       return { ...s, installed: brokerInstalled(), building: !!brokerSlot.brokerBuilding, setupCmd: SETUP_CMD, cli: `"${BROKER_BIN}"` }
     }
     router.get('/broker/status', async (_req, res) => {
+      markWatched()
       const s = await brokerStatusPayload()
       // a cold `bw status` can time the RPC out — serve the last real status
       // instead of the transient error, so a fresh viewer never sticks on it
@@ -1289,6 +1291,7 @@ export default {
         ? Object.keys(val).sort().reduce((o, k) => ((o[k] = val[k]), o), {})
         : val)
     const brokerStatusTick = async (force = false) => {
+      if (!force && Date.now() - (brokerSlot.watchedAt || 0) > 90000) return   // nobody watching → idle (the visible re-GETs stamp us awake)
       // a hung RPC (up to brokerCall's 20s cap) must not swallow an action's
       // forced push — remember it and re-run once the in-flight tick settles
       if (brokerSlot.statusBusy) { if (force) brokerSlot.statusForcePending = true; return }

@@ -1,6 +1,6 @@
 {
   "name": "atelier-hb-auth-module",
-  "version": "1.0.6",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "HB Auth — the credentials & login-methods manager for agents: an account registry / recipe book over the vault, LastPass + SMS methods (convention path), and the ENFORCED Bitwarden broker — a signed local daemon that holds the only vault session and gates every credential behind per-credential policy, an origin check, and a native macOS approval. Secrets never enter the model's context. macOS only.",
