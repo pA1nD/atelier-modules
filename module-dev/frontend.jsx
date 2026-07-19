@@ -179,8 +179,8 @@ function Modal({ onClose, wide, children }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-zinc-950/50 backdrop-blur-sm" onClick={onClose} />
       <div className={cn('relative flex h-[88vh] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-zinc-900', wide ? 'max-w-7xl' : 'max-w-4xl')}>
-        <button onClick={onClose} aria-label="Close" className="absolute right-3 top-3 z-10 cursor-pointer rounded-lg bg-white/80 p-1.5 text-zinc-400 shadow-sm ring-1 ring-zinc-950/10 backdrop-blur transition hover:text-zinc-700 dark:bg-zinc-900/80 dark:ring-white/10 dark:hover:text-zinc-200"><Icon name="x" size={16} /></button>
-        <div className="flex-1 overflow-auto px-6 py-6">{children}</div>
+        <button onClick={onClose} aria-label="Close" className="absolute right-4 top-4 z-10 cursor-pointer p-1 text-zinc-300 transition-colors hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-300"><Icon name="x" size={18} strokeWidth={2} /></button>
+        <div className="md-noscroll flex-1 overflow-auto px-6 py-6">{children}</div>
       </div>
     </div>
   )
@@ -292,6 +292,10 @@ export default function Module() {
 
   return (
     <div className="mx-auto max-w-4xl text-zinc-950 dark:text-white">
+      <style>{`
+        .md-noscroll{ scrollbar-width: none; }
+        .md-noscroll::-webkit-scrollbar{ display: none; }
+      `}</style>
       <header>
         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-600/90 dark:text-blue-400/90">Module Development</div>
         <h1 className="mt-1.5 text-[30px] font-semibold leading-none tracking-tight">Three folders, three jobs</h1>
