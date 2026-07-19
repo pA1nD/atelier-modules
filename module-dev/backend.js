@@ -55,6 +55,27 @@ export function claudeMdState(file, expected) {
   return txt.slice(start).trim() === expected.trim() ? 'ours' : 'ours-stale'
 }
 
+// Line diff (LCS): rows of { t: ' '|'+'|'-', s } — '+' = only in the playbook,
+// '-' = only in the current file. Small inputs (a few hundred lines), so the
+// O(n·m) table is fine.
+export function lineDiff(aText, bText) {
+  const a = String(aText ?? '').split('\n'), b = String(bText ?? '').split('\n')
+  const n = a.length, m = b.length
+  const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1))
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1])
+  const rows = []
+  let i = 0, j = 0
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { rows.push({ t: ' ', s: a[i] }); i++; j++ }
+    else if (L[i + 1][j] >= L[i][j + 1]) { rows.push({ t: '-', s: a[i] }); i++ }
+    else { rows.push({ t: '+', s: b[j] }); j++ }
+  }
+  while (i < n) rows.push({ t: '-', s: a[i++] })
+  while (j < m) rows.push({ t: '+', s: b[j++] })
+  return rows
+}
+
 // Watch gate: the backend scans only while some tab marked itself watching
 // recently (GET /snapshot on mount + a 45s presence heartbeat while visible).
 // An unwatched instance's timer still fires, but does no work at all.
@@ -273,6 +294,23 @@ export default {
         res.json({ ok: true, ...r, backup: r.backup ? tilde(r.backup) : null })
       } catch (e) { res.json({ error: e.message }, 500) }
       tickNow()
+    })
+
+    // What would change: the current file (our block only, when ours) vs the
+    // freshly filled template — '-' rows are yours, '+' rows are the playbook's.
+    router.get('/claudemd-diff/:target', (req, res) => {
+      const target = String(req.params.target || '')
+      if (!['instance', 'chromes'].includes(target)) return res.json({ error: 'target must be instance|chromes' }, 404)
+      const { modules, chromes } = resolvePaths()
+      const dir = target === 'instance' ? instanceRoot : chromes
+      const tpl = template(target)
+      if (!tpl) return res.json({ error: 'template missing' }, 500)
+      const expected = fillTemplate(tpl, vars(modules, chromes))
+      let cur = ''
+      try { cur = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8') } catch {}
+      const i = cur.indexOf(MARKER)
+      const base = i !== -1 ? cur.slice(cur.lastIndexOf('\n', i) + 1) : cur
+      res.json({ target, state: claudeMdState(path.join(dir, 'CLAUDE.md'), expected), rows: lineDiff(base, expected) })
     })
 
     // Preview a filled template (the UI shows what would be written).

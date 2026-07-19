@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fillTemplate, claudeMdState, installClaudeMd, suggestDirs, isWatched } from '../backend.js'
+import { fillTemplate, claudeMdState, installClaudeMd, suggestDirs, isWatched, lineDiff } from '../backend.js'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'module-dev-test-'))
 
@@ -93,4 +93,11 @@ test('isWatched: recent heartbeat keeps the watcher awake, silence idles it', ()
   assert.equal(isWatched(now - 90000, now), true)
   assert.equal(isWatched(now - 90001, now), false)
   assert.equal(isWatched(undefined, now), false)
+})
+
+test('lineDiff: adds, removals, common core', () => {
+  const rows = lineDiff('a\nb\nc', 'a\nX\nc')
+  assert.deepEqual(rows.map(r => r.t + r.s), [' a', '-b', '+X', ' c'])
+  assert.ok(lineDiff('', 'one\ntwo').every(r => r.t === '+' || r.s === ''))
+  assert.deepEqual(lineDiff('same', 'same'), [{ t: ' ', s: 'same' }])
 })

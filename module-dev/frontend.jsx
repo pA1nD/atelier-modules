@@ -68,6 +68,78 @@ function StepDot({ done }) {
     : <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-zinc-500/10 text-zinc-400"><Icon name="arrow-right" size={13} /></span>
 }
 
+/* a tiny markdown renderer (copied from the claude-md module — no cross-module
+ * imports) for the playbook previews: headings, lists, **bold**, `code`, fences.
+ * Marker comments (<!-- ... -->) are skipped. */
+function Markdown({ text }) {
+  const inline = (s) => {
+    const parts = []; let last = 0, i = 0, m
+    const re = /(\*\*([^*]+)\*\*|`([^`]+)`)/g
+    while ((m = re.exec(s))) {
+      if (m.index > last) parts.push(s.slice(last, m.index))
+      if (m[2]) parts.push(<strong key={i++} className="font-semibold text-zinc-950 dark:text-zinc-50">{m[2]}</strong>)
+      else parts.push(<code key={i++} className="rounded bg-zinc-950/[0.06] px-1 py-0.5 font-mono text-[0.9em] dark:bg-white/10">{m[3]}</code>)
+      last = m.index + m[0].length
+    }
+    if (last < s.length) parts.push(s.slice(last))
+    return parts
+  }
+  const out = []; let list = null, code = null, k = 0
+  const flush = () => { if (list) { out.push(<ul key={k++} className="my-2 space-y-1">{list}</ul>); list = null } }
+  for (const line of (text || '').split('\n')) {
+    if (/^<!--/.test(line.trim())) continue
+    if (/^```/.test(line)) {
+      if (code === null) { flush(); code = [] }
+      else { out.push(<pre key={k++} className="my-3 overflow-auto rounded-lg bg-zinc-950 p-3 font-mono text-[12px] leading-relaxed text-zinc-300">{code.join('\n')}</pre>); code = null }
+      continue
+    }
+    if (code !== null) { code.push(line); continue }
+    if (/^#\s+/.test(line)) { flush(); out.push(<h3 key={k++} className="mt-6 border-b border-zinc-950/10 pb-1.5 text-[18px] font-bold text-zinc-950 first:mt-0 dark:border-white/10 dark:text-zinc-50">{inline(line.replace(/^#\s+/, ''))}</h3>) }
+    else if (/^##\s+/.test(line)) { flush(); out.push(<h4 key={k++} className="mt-4 text-[14.5px] font-semibold text-zinc-900 dark:text-zinc-100">{inline(line.replace(/^##\s+/, ''))}</h4>) }
+    else if (/^###\s+/.test(line)) { flush(); out.push(<h5 key={k++} className="mt-3 text-[13px] font-semibold text-zinc-700 dark:text-zinc-300">{inline(line.replace(/^###\s+/, ''))}</h5>) }
+    else if (/^[-*]\s+/.test(line)) { (list = list || []).push(<li key={k++} className="flex gap-2 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300"><span className="mt-px text-zinc-400">•</span><span>{inline(line.replace(/^[-*]\s+/, ''))}</span></li>) }
+    else if (line.trim() === '') flush()
+    else { flush(); out.push(<p key={k++} className="my-2 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">{inline(line)}</p>) }
+  }
+  flush()
+  return <div>{out}</div>
+}
+
+/* the diff view: '-' rows = only in your file · '+' rows = only in the playbook;
+ * long unchanged runs collapse to a count so 'present' diffs stay readable */
+function DiffView({ rows }) {
+  const out = []
+  let i = 0, k = 0
+  while (i < rows.length) {
+    if (rows[i].t !== ' ') { out.push(rows[i]); i++; continue }
+    let j = i
+    while (j < rows.length && rows[j].t === ' ') j++
+    const run = j - i
+    if (run > 7) {
+      for (let x = i; x < i + 3; x++) out.push(rows[x])
+      out.push({ t: '…', s: `${run - 6} unchanged lines` })
+      for (let x = j - 3; x < j; x++) out.push(rows[x])
+    } else for (let x = i; x < j; x++) out.push(rows[x])
+    i = j
+  }
+  return (
+    <div className="overflow-auto rounded-xl bg-zinc-950 p-3 font-mono text-[11.5px] leading-relaxed">
+      <div className="mb-2 flex gap-4 text-[10.5px] text-zinc-500">
+        <span><span className="text-red-400">− red</span> only in your file</span>
+        <span><span className="text-emerald-400">+ green</span> only in the playbook</span>
+      </div>
+      {out.map((r, idx) => (
+        <div key={idx} className={cn('whitespace-pre-wrap break-words px-1.5',
+          r.t === '+' ? 'bg-emerald-500/[0.13] text-emerald-300' :
+          r.t === '-' ? 'bg-red-500/[0.12] text-red-300' :
+          r.t === '…' ? 'py-0.5 text-center text-zinc-600' : 'text-zinc-400')}>
+          {r.t === '…' ? `· ${r.s} ·` : `${r.t === ' ' ? ' ' : r.t} ${r.s}`}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function CopyBtn({ getText, label = 'Copy', copiedLabel = 'Copied' }) {
   const [ok, setOk] = useState(false)
   const copy = async () => {
@@ -128,8 +200,12 @@ export default function Module() {
   }, [])
 
   const showTemplate = async (name) => {
-    if (preview && preview.name === name) { setPreview(null); return }
-    try { setPreview(await (await fetch(self.api + '/template/' + name)).json()) } catch {}
+    if (preview && preview.name === name && preview.mode === 'md') { setPreview(null); return }
+    try { setPreview({ ...(await (await fetch(self.api + '/template/' + name)).json()), mode: 'md' }) } catch {}
+  }
+  const showDiff = async (name) => {
+    if (preview && preview.name === name && preview.mode === 'diff') { setPreview(null); return }
+    try { setPreview({ ...(await (await fetch(self.api + '/claudemd-diff/' + name)).json()), name, mode: 'diff' }) } catch {}
   }
 
   if (!snap) return <div className="flex items-center justify-center gap-2 py-24 text-sm text-zinc-500"><Icon name="loader-circle" size={16} className="animate-spin" /> Reading your instance…</div>
@@ -239,12 +315,20 @@ export default function Module() {
                   {s.state === 'present' && !s.done && null}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {s.tpl && <button onClick={() => showTemplate(s.tpl)} className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-950/[0.05] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200">{preview && preview.name === s.tpl ? 'hide' : 'view'}</button>}
+                  {s.tpl && <button onClick={() => showTemplate(s.tpl)} className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-950/[0.05] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200">{preview && preview.name === s.tpl && preview.mode === 'md' ? 'hide' : 'view'}</button>}
+                  {s.tpl && (s.state === 'present' || s.state === 'ours-stale') && <button onClick={() => showDiff(s.tpl)} className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-amber-600/80 transition-colors hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-400/80 dark:hover:text-amber-300">{preview && preview.name === s.tpl && preview.mode === 'diff' ? 'hide diff' : 'diff'}</button>}
                   {s.action}
                 </div>
               </div>
-              {preview && s.tpl === preview.name && (
-                <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed text-zinc-300">{preview.content}</pre>
+              {preview && s.tpl === preview.name && preview.mode === 'md' && (
+                <div className="mt-3 max-h-96 overflow-auto rounded-xl border border-zinc-950/10 bg-white px-5 py-4 dark:border-white/10 dark:bg-zinc-900/60">
+                  <Markdown text={preview.content} />
+                </div>
+              )}
+              {preview && s.tpl === preview.name && preview.mode === 'diff' && (
+                <div className="mt-3 max-h-96 overflow-auto">
+                  <DiffView rows={preview.rows || []} />
+                </div>
               )}
             </div>
           ))}
