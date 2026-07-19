@@ -454,7 +454,8 @@ export default {
     })
 
     /* ── instruments ── */
-    router.get('/snapshot', async (req, res) => res.json(await snapshot()))
+    const markWatched = () => { slot.watchedAt = Date.now() }
+    router.get('/snapshot', async (req, res) => { markWatched(); res.json(await snapshot()) })
 
     // the full text of one imported agent doc — whitelisted against the docs the
     // managed block actually imports, so this can never read an arbitrary path.
@@ -516,6 +517,7 @@ export default {
      *    clients fetch once on mount, then just listen. An idle machine sends
      *    no frames at all. */
     const tick = async (force = false) => {
+      if (!force && Date.now() - (slot.watchedAt || 0) > 90000) return   // nobody watching → idle (the 45s visible re-GET stamps us awake)
       if (slot.watchBusy) return
       slot.watchBusy = true
       try {
