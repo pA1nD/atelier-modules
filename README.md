@@ -38,4 +38,7 @@ backed up first.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT — see [LICENSE](./LICENSE) — for every module. The one exception is
+**catalyst-chrome**: it contains components adapted from Tailwind Plus
+"Catalyst" (© Tailwind Labs), which are **not** MIT — see
+[catalyst-chrome/LICENSE](./catalyst-chrome/LICENSE).
