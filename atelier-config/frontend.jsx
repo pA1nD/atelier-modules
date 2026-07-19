@@ -679,10 +679,16 @@ function Daemon() {
     } catch { setData((prev) => prev || { managed: [], installed: [] }); return false }
   }, [])
   // Fetch once; the backend probes launchd on its own timer and pushes a
-  // `plists` frame when anything changes (install/start/stop, crash-loops).
+  // `plists` frame when anything changes. The 45s visible re-fetch keeps that
+  // probe awake (it idles without viewers) and heals frames lost on reconnect.
   useEffect(() => {
+    let last = Date.now()
     load()
-    return self.subscribe((f) => { if (f.type === 'plists' && f.managed) setData({ managed: f.managed, installed: f.installed || [] }) })
+    const unsub = self.subscribe((f) => { if (f.type === 'plists' && f.managed) setData({ managed: f.managed, installed: f.installed || [] }) })
+    const t = setInterval(() => { if (!document.hidden) { last = Date.now(); load() } }, 45000)
+    const onVis = () => { if (!document.hidden && Date.now() - last > 5000) { last = Date.now(); load() } }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { unsub(); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [load])
   // After the install handoff reloads the page, show a one-time success note.
   useEffect(() => {

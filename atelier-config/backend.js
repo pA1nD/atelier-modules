@@ -578,12 +578,14 @@ export default {
       const installed = await listInstalledAgents(new Set(managed.map((m) => m.label)))
       return { managed, installed }
     }
-    router.get('/plists', async (req, res) => res.json(await plistsPayload()))
+    const markWatched = () => { slot.watchedAt = Date.now() }
+    router.get('/plists', async (req, res) => { markWatched(); res.json(await plistsPayload()) })
 
     /* live push — the plist probe runs `launchctl print` per agent, so the poll
      * lives HERE, once for all viewers: one timer recomputes, diffs, broadcasts
      * only on change; plist actions force a tick. Clients fetch once + listen. */
     const tick = async (force = false) => {
+      if (!force && Date.now() - (slot.watchedAt || 0) > 90000) return   // nobody watching → idle (the 45s visible re-fetch stamps us awake)
       if (slot.watchBusy) return
       slot.watchBusy = true
       try {
