@@ -1,6 +1,6 @@
 {
   "name": "gwx",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "license": "MIT",
   "description": "gwx — your whole Google Workspace in your agent's hands: multi-account CLI, 96 ready-made skills, one-click npm install.",
   "atelier": {
