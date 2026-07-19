@@ -2,7 +2,7 @@
   "id": "atelier-modules",
   "name": "Atelier Modules",
   "label": "Atelier Modules",
-  "description": "Eight apps that set up a sharper Claude Code — Session Codes + the status bar, the Horse Browser night console with its HB Auth and HB Display wings, CLAUDE.md, gwx, the Atelier Config settings panel, and Module Development, the three-folder setup for building modules — plus catalyst-chrome, the theme they render in.",
+  "description": "Baseline Atelier modules, including: Horse Browser and auth for agents, gwx, Status Bar, and dev setup.",
   "apps": [
     {
       "id": "statusbar",

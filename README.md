@@ -1,9 +1,9 @@
 # Atelier Modules
 
-The public **Atelier** collection: eight small apps that set up a sharper
-Claude Code — each one teaches a system in plain language, reads your *real*
-machine live, and switches the system on without leaving the page — plus the
-chrome they render in.
+The public **Atelier** collection — baseline modules, including: Horse Browser
+and auth for agents, gwx, Status Bar, and dev setup. Each one teaches its
+system in plain language, reads your *real* machine live, and switches it on
+without leaving the page.
 
 | Module | What it does |
 |---|---|
