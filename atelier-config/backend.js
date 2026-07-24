@@ -12,8 +12,9 @@ import path from 'node:path'
 import os from 'node:os'
 import http from 'node:http'
 import https from 'node:https'
+import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
-import { baseName, addToWorkspace, removeFromConfig, renameWorkspace, okShape } from './config-util.mjs'
+import { baseName, addToWorkspace, removeFromConfig, renameWorkspace, okShape, parseModules } from './config-util.mjs'
 
 const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null } }
 const exists = (p) => { try { fs.accessSync(p); return true } catch { return false } }
@@ -210,13 +211,230 @@ function tailFile(p, { lines = 50, maxBytes = 32768 } = {}) {
   finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} }
 }
 
-// Resolve a managed descriptor's stdout/stderr log paths (same defaults the builder writes).
+// Resolve a managed descriptor's stdout/stderr log paths. An adopted agent's
+// installed plist may point elsewhere (another tool wrote it) — the plist on
+// disk is what launchd actually uses, so prefer its paths over our defaults.
 function plistLogPaths(desc) {
-  const { logDir } = agentPaths(desc.label)
+  const { plistPath, logDir } = agentPaths(desc.label)
+  let installed = ''
+  try { installed = fs.readFileSync(plistPath, 'utf8') } catch {}
+  const fromPlist = (key) => (installed.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`)) || [])[1]
   return {
-    stdout: expandPlistToken(desc.stdout || path.join(logDir, `${desc.label}.out.log`)),
-    stderr: expandPlistToken(desc.stderr || path.join(logDir, `${desc.label}.err.log`)),
+    stdout: expandPlistToken(fromPlist('StandardOutPath') || desc.stdout || path.join(logDir, `${desc.label}.out.log`)),
+    stderr: expandPlistToken(fromPlist('StandardErrorPath') || desc.stderr || path.join(logDir, `${desc.label}.err.log`)),
   }
+}
+
+// ── cloudflare tunnel (moved here from devops) ────────────────────────────────
+//
+// Honest per-hostname status, two legs:
+//   • machine leg — is a cloudflared `tunnel run` for THIS tunnel alive on this
+//     host? lsof can't see another machine's sockets, but we can see whether the
+//     connector process lives here. If it doesn't, the public name is served
+//     elsewhere (e.g. the old laptop), no matter that the URL returns 200.
+//   • local leg — who binds the ingress's target port locally? If that pid is us
+//     (in-process sidecar) or a child we spawned, it's genuinely our origin.
+// Config (uuid + ingress) is read from the hand-kept ~/.cloudflared/config.yml —
+// this module never owns it, only reads it. Descriptors live in data/tunnels.json
+// (per-machine state — data/ is never shipped by a cut, never replaced by an
+// update, and edits don't trip the hot-reload watcher) — re-read each request,
+// edit + refresh.
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const TUNNELS_MANIFEST = path.join(HERE, 'data', 'tunnels.json')
+function loadTunnels() {
+  try { return JSON.parse(fs.readFileSync(TUNNELS_MANIFEST, 'utf8')) }
+  catch { return [] }
+}
+
+// Tiny reader for cloudflared's config.yml: the tunnel uuid + ingress entries.
+// Returns null when the file isn't present (this host isn't a tunnel host).
+function readCloudflaredConfig(configPath) {
+  let text
+  try { text = fs.readFileSync(configPath, 'utf8') }
+  catch { return null }
+  let uuid = null
+  const ingress = []
+  let pendingHost = null
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    const t = line.match(/^tunnel:\s*(\S+)/)
+    if (t) { uuid = t[1]; continue }
+    const h = line.match(/^-?\s*hostname:\s*(\S+)/)
+    if (h) { pendingHost = h[1]; continue }
+    const s = line.match(/^-?\s*service:\s*(\S+)/)
+    if (s) { ingress.push({ hostname: pendingHost, service: s[1] }); pendingHost = null }
+  }
+  return { uuid, ingress }
+}
+
+// Only http(s) origins have a local port to probe; the http_status:404 catch-all
+// has none (and its ":404" must not be mistaken for one).
+function portOfService(service) {
+  if (!/^https?:\/\//.test(service || '')) return null
+  const m = service.match(/:(\d+)\b/)
+  return m ? Number(m[1]) : null
+}
+
+// Full pid→ppid table, parsed once per probe so the tree walk is pure JS.
+async function processTable() {
+  const r = await sh('ps -axo pid=,ppid=', { timeoutMs: 5000 })
+  const table = new Map()
+  for (const line of r.stdout.split('\n')) {
+    const m = line.trim().match(/^(\d+)\s+(\d+)$/)
+    if (m) table.set(Number(m[1]), Number(m[2]))
+  }
+  return table
+}
+
+// Is `pid` this atelier process, or a descendant of it? Walk ppid upward.
+function inOurTree(pid, table) {
+  let cur = pid, hops = 0
+  while (Number.isInteger(cur) && cur > 1 && hops++ < 40) {
+    if (cur === process.pid) return true
+    cur = table.get(cur)
+  }
+  return false
+}
+
+// Who (locally) listens on TCP `port`? Same-user sockets need no sudo and the
+// module sidecar ports all run as us. Returns the pid or null.
+async function listenerPid(port) {
+  const r = await sh(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | head -1`, { timeoutMs: 5000 })
+  const pid = Number(r.stdout.trim().split('\n')[0])
+  return Number.isInteger(pid) && pid > 0 ? pid : null
+}
+
+// Machine leg: a cloudflared `tunnel run` matching this config/uuid on this host.
+async function tunnelRunningHere(configPath, uuid) {
+  const r = await sh(`ps -axww -o pid=,command= | grep '[c]loudflared' | grep 'tunnel run' || true`, { timeoutMs: 5000 })
+  for (const line of r.stdout.split('\n')) {
+    if (!line.trim()) continue
+    if ((configPath && line.includes(configPath)) || (uuid && line.includes(uuid))) {
+      const pid = Number(line.trim().split(/\s+/)[0])
+      return { running: true, pid: Number.isInteger(pid) ? pid : null }
+    }
+  }
+  return { running: false, pid: null }
+}
+
+// Combine the two legs into one badge per ingress row.
+function ingressVerdict(local, runningHere, isCatchAll) {
+  if (isCatchAll) return null
+  if (runningHere && local === 'mine') return { color: 'lime', label: 'serving here' }
+  if (!runningHere && local === 'mine') return { color: 'amber', label: 'served elsewhere' }
+  if (runningHere) return { color: 'amber', label: local === 'none' ? 'no local origin' : 'foreign origin' }
+  return { color: 'zinc', label: 'not on this host' }
+}
+
+async function probeTunnel(desc, table) {
+  const id = (desc.name || 'tunnel').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+  const configPath = expandPlistToken(desc.config)
+  const cfg = readCloudflaredConfig(configPath)
+  if (!cfg) return { id, name: desc.name, configured: false, configPath: desc.config, ingress: [] }
+
+  const bin = desc.bin || 'cloudflared'
+  const [run0, ver, daemon] = await Promise.all([
+    tunnelRunningHere(configPath, cfg.uuid),
+    sh(`${bin} --version 2>/dev/null | head -1`, { timeoutMs: 5000 }),
+    agentRuntime(desc.daemon),
+  ])
+  const version = (ver.stdout.match(/version\s+(\S+)/) || [])[1] || null
+
+  // Connector count needs the account cert (creds) to hit the CF API; absent
+  // those it degrades to null rather than erroring. >1 connector = the tunnel is
+  // live on more than one host (split-brain to watch during a migration).
+  let connectors = null
+  if (cfg.uuid) {
+    const info = await sh(`${bin} tunnel info ${cfg.uuid} 2>/dev/null`, { timeoutMs: 8000 })
+    if (info.code === 0) connectors = (info.stdout.match(/^[0-9a-f-]{36}\s/gim) || []).length || null
+  }
+
+  const ingress = []
+  for (const e of cfg.ingress) {
+    const isCatchAll = !e.hostname
+    const port = portOfService(e.service)
+    let local = null, pid = null
+    if (port) {
+      pid = await listenerPid(port)
+      local = pid ? (inOurTree(pid, table) ? 'mine' : 'other-local') : 'none'
+    }
+    ingress.push({
+      hostname: e.hostname || null,
+      service: e.service,
+      port,
+      local,                 // 'mine' | 'other-local' | 'none' | null (non-http service)
+      pid,
+      verdict: ingressVerdict(local, run0.running, isCatchAll),
+    })
+  }
+
+  return {
+    id,
+    name: desc.name,
+    configured: true,
+    configPath: desc.config,
+    uuid: cfg.uuid,
+    runningHere: run0.running,
+    runPid: run0.pid,
+    version,
+    connectors,
+    daemon,
+    ingress,
+  }
+}
+
+// The tunnel daemon's plist — cloudflared-specific (its own args + env), so it
+// stays separate from managedPlistXml (the generic program/args descriptor).
+function tunnelPlistXml({ label, binPath, configPath, outLog, errLog, logLevel }) {
+  const args = [binPath, '--no-autoupdate', '--config', configPath, 'tunnel', 'run']
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>Label</key><string>${label}</string>
+\t<key>ProgramArguments</key>
+\t<array>${args.map((a) => `\n\t\t<string>${a}</string>`).join('')}
+\t</array>
+\t<key>EnvironmentVariables</key><dict><key>TUNNEL_LOGLEVEL</key><string>${logLevel || 'info'}</string></dict>
+\t<key>RunAtLoad</key><true/>
+\t<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+\t<key>ProcessType</key><string>Background</string>
+\t<key>StandardOutPath</key><string>${outLog}</string>
+\t<key>StandardErrorPath</key><string>${errLog}</string>
+</dict>
+</plist>
+`
+}
+
+// install | start | stop | restart | uninstall for the tunnel's LaunchAgent —
+// all in the gui/<uid> domain, no sudo. Returns { ok, log }.
+async function tunnelDaemonAction(desc, action) {
+  const label = desc.daemon
+  if (!label) return { ok: false, log: 'no daemon label in tunnels.json' }
+  const { uid, plistPath, laDir, logDir } = agentPaths(label)
+  const dom = `gui/${uid}`
+  const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
+  const tail = async (cmd) => { const r = await sh(cmd); return { ok: r.code === 0, log: (r.stdout + r.stderr).trim() } }
+
+  if (action === 'install') {
+    const binPath = (await sh(`command -v ${desc.bin || 'cloudflared'} 2>/dev/null`)).stdout.trim() || '/opt/homebrew/bin/cloudflared'
+    const configPath = expandPlistToken(desc.config)
+    fs.mkdirSync(laDir, { recursive: true })
+    fs.mkdirSync(logDir, { recursive: true })
+    fs.writeFileSync(plistPath, tunnelPlistXml({
+      label, binPath, configPath,
+      outLog: path.join(logDir, 'cloudflared.out.log'),
+      errLog: path.join(logDir, 'cloudflared.err.log'),
+      logLevel: desc.logLevel,
+    }))
+    return tail(`launchctl bootout ${dom}/${label} 2>/dev/null; launchctl bootstrap ${dom} ${q(plistPath)} && launchctl enable ${dom}/${label} && launchctl kickstart ${dom}/${label} && echo installed+started`)
+  }
+  if (action === 'uninstall') return tail(`launchctl bootout ${dom}/${label} 2>/dev/null; rm -f ${q(plistPath)} && echo removed`)
+  if (action === 'start')     return tail(`launchctl bootstrap ${dom} ${q(plistPath)} 2>/dev/null; launchctl kickstart ${dom}/${label} && echo started`)
+  if (action === 'stop')      return tail(`launchctl bootout ${dom}/${label} && echo stopped`)
+  if (action === 'restart')   return tail(`launchctl kickstart -k ${dom}/${label} 2>/dev/null && echo restarted || { launchctl bootstrap ${dom} ${q(plistPath)}; launchctl kickstart ${dom}/${label} && echo started; }`)
+  return { ok: false, log: `unknown action ${action}` }
 }
 
 export default {
@@ -581,9 +799,32 @@ export default {
     const markWatched = () => { slot.watchedAt = Date.now() }
     router.get('/plists', async (req, res) => { markWatched(); res.json(await plistsPayload()) })
 
-    /* live push — the plist probe runs `launchctl print` per agent, so the poll
-     * lives HERE, once for all viewers: one timer recomputes, diffs, broadcasts
-     * only on change; plist actions force a tick. Clients fetch once + listen. */
+    // Read-only cloudflare tunnel status: which public hostname lands here, and
+    // whether this host's process tree is the one actually serving each port.
+    const tunnelsPayload = async () => {
+      if (process.platform !== 'darwin') return { tunnels: [], unsupported: true }
+      const table = await processTable()
+      return { tunnels: await Promise.all(loadTunnels().map((d) => probeTunnel(d, table))) }
+    }
+    router.get('/tunnels', async (req, res) => { markWatched(); res.json(await tunnelsPayload()) })
+
+    // Manage the tunnel's user LaunchAgent — install/start/stop/restart/uninstall,
+    // no sudo (gui/<uid> domain). id = the tunnel's name slug (as in /tunnels).
+    router.post('/tunnels/:id/daemon/:action', async (req, res) => {
+      const { id, action } = req.params
+      if (!['install', 'start', 'stop', 'restart', 'uninstall'].includes(action)) {
+        return res.json({ ok: false, msg: 'action must be install|start|stop|restart|uninstall' }, 400)
+      }
+      const desc = loadTunnels().find((d) => (d.name || 'tunnel').toLowerCase().replace(/[^a-z0-9]+/g, '-') === id)
+      if (!desc) return res.json({ ok: false, msg: `no tunnel "${id}"` }, 404)
+      res.json(await tunnelDaemonAction(desc, action))
+      tickNow()
+    })
+
+    /* live push — the plist + tunnel probes spawn subprocesses (launchctl per
+     * agent, ps, cloudflared), so the poll lives HERE, once for all viewers: one
+     * timer recomputes, diffs, broadcasts only on change; actions force a tick.
+     * Clients fetch once + listen. */
     const tick = async (force = false) => {
       if (!force && Date.now() - (slot.watchedAt || 0) > 90000) return   // nobody watching → idle (the 45s visible re-fetch stamps us awake)
       if (slot.watchBusy) return
@@ -592,6 +833,9 @@ export default {
         const p = await plistsPayload()
         const key = JSON.stringify(p)
         if (force || key !== slot.lastPlistsKey) { slot.lastPlistsKey = key; ctx.broadcast({ type: 'plists', ...p }) }
+        const t = await tunnelsPayload()
+        const tKey = JSON.stringify(t)
+        if (force || tKey !== slot.lastTunnelsKey) { slot.lastTunnelsKey = tKey; ctx.broadcast({ type: 'tunnels', ...t }) }
       } catch {}
       finally { slot.watchBusy = false }
     }
@@ -680,6 +924,213 @@ export default {
       const desc = managedDescriptors().find((d) => d.label === req.params.label)
       if (!desc) return res.json({ ok: false, msg: `no managed plist "${req.params.label}"` }, 404)
       res.json(logsPayload(desc))
+    })
+
+    // ---- tailnet sharing -------------------------------------------------------
+    // Share THIS instance over Tailscale without touching atelier's own bind:
+    // `tailscale serve --tcp <port>` makes Tailscale listen on the tailnet
+    // address and forward to localhost — atelier stays loopback-only and the
+    // LAN sees nothing. serve config persists in Tailscale's own state; the
+    // optional login agent (a one-shot LaunchAgent) merely re-asserts it after
+    // a Tailscale logout/reset, and exits 0 on machines without Tailscale.
+    const tsBin = () => {
+      for (const c of ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale']) {
+        if (fs.existsSync(c)) return c
+      }
+      return null
+    }
+    // Adopt a hand-made login agent that already asserts this port's forward,
+    // instead of minting a duplicate.
+    const adoptedServeLabel = (port) => {
+      const { laDir } = agentPaths('x')
+      let files = []
+      try { files = fs.readdirSync(laDir).filter((f) => f.endsWith('.plist')) } catch { return null }
+      for (const f of files) {
+        let text = ''
+        try { text = fs.readFileSync(path.join(laDir, f), 'utf8') } catch { continue }
+        // Loose on purpose: hand-made agents phrase the command differently
+        // (a literal port, a shell loop over several ports, --tcp=N) — adopt
+        // any plist that runs `tailscale serve` and mentions this port.
+        if (text.includes('serve --bg --tcp') && new RegExp(`\\b${port}\\b`).test(text)) {
+          return (text.match(/<key>Label<\/key>\s*<string>([^<]+)<\/string>/) || [])[1] || null
+        }
+      }
+      return null
+    }
+    const tailnetDescriptor = (bin) => {
+      const port = String(ctx.port)
+      const slug = path.basename(process.env.ATELIER_ROOT || instanceRoot).replace(/[^A-Za-z0-9._-]/g, '-')
+      return {
+        label: adoptedServeLabel(port) || `de.pa1nd.atelier.${slug}.tailnet`,
+        program: '/bin/zsh',
+        args: ['-c', `TS=${bin}; [ -x "$TS" ] && "$TS" serve --bg --tcp ${port} tcp://localhost:${port}; exit 0`],
+        keepAlive: false,
+        runAtLoad: true,
+      }
+    }
+    // Every TCP listener owned by this shell process or its descendants — the
+    // mechanical definition of "part of this Atelier". No registry: in-process
+    // listeners (module backends' own http servers) share our pid; spawned
+    // sidecars are matched to a mounted module via their command line.
+    const atelierListeners = async () => {
+      const ps = await sh('ps -axo pid=,ppid=,command=', { timeoutMs: 8000 })
+      const rows = ps.stdout.split('\n')
+        .map((l) => l.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean)
+        .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3] }))
+      const kids = new Map()
+      for (const r of rows) { if (!kids.has(r.ppid)) kids.set(r.ppid, []); kids.get(r.ppid).push(r.pid) }
+      const mine = new Set([process.pid])
+      const queue = [process.pid]
+      while (queue.length) for (const k of kids.get(queue.shift()) || []) if (!mine.has(k)) { mine.add(k); queue.push(k) }
+      const cmdByPid = new Map(rows.map((r) => [r.pid, r.command]))
+      const lf = await sh('/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN -Fpn', { timeoutMs: 8000 })
+      const byPort = new Map()   // port → { binds:Set, pids:Set }
+      let pid = null
+      for (const line of lf.stdout.split('\n')) {
+        if (line[0] === 'p') pid = Number(line.slice(1))
+        else if (line[0] === 'n' && pid != null && mine.has(pid)) {
+          const m = line.slice(1).match(/^(.*):(\d+)$/)
+          if (!m) continue
+          const port = Number(m[2])
+          if (!byPort.has(port)) byPort.set(port, { binds: new Set(), pids: new Set() })
+          byPort.get(port).binds.add(m[1].replace(/^\[|\]$/g, ''))
+          byPort.get(port).pids.add(pid)
+        }
+      }
+      const cfg = readJson(configFile) || {}
+      const dirs = parseModules(cfg.modules)
+        .map((it) => ({ dir: resolveDir(it.raw, it.ws), id: baseName(it.raw) }))
+        .filter((d) => d.dir)
+      const me = Number(ctx.port)
+      const rows2 = [...byPort.entries()].map(([port, p]) => {
+        let label
+        if (p.pids.has(process.pid)) label = port === me ? 'this Atelier' : null   // in-process: attributed below
+        else {
+          const cmd = cmdByPid.get([...p.pids][0]) || ''
+          const hit = dirs.find((d) => cmd.includes(d.dir))
+          label = hit ? hit.id : ((cmd.trim().split(/\s+/)[0] || 'child process').split('/').pop())
+        }
+        const binds = [...p.binds].sort()
+        return { port, label, binds, lanOpen: binds.some((b) => b === '0.0.0.0' || b === '*' || b === '::') }
+      }).sort((a, b) => (a.port === me ? -1 : b.port === me ? 1 : a.port - b.port))
+      const unattributed = rows2.filter((r) => r.label === null).map((r) => r.port)
+      const hints = await sidecarOwners(unattributed, dirs)
+      for (const r of rows2) if (r.label === null) r.label = hints.get(r.port) || 'instance sidecar'
+      return rows2
+    }
+
+    // Attribute an IN-PROCESS listener (it shares our pid) to a module. Two
+    // heuristics, no module cooperation needed: (1) sidecar ports are almost
+    // always literal in the owning module's source — grep the mounted dirs,
+    // ranking definition-style lines (an UPPERCASE *_PORT constant, a
+    // listen(...) call) above prose mentions; (2) the instance .env names
+    // them (MYAPP_PORT=<the port>) — map the var name's tokens onto a module
+    // id. Cached: the grep sweep isn't free.
+    const sidecarOwners = async (ports, dirs) => {
+      if (!ports.length) return new Map()
+      const key = ports.join(',')
+      const c = slot.portOwnerCache
+      if (c && c.key === key && Date.now() - c.at < 60000) return c.map
+      const map = new Map()
+      const envHints = new Map()   // port → module id, from <instanceRoot>/.env
+      try {
+        for (const line of fs.readFileSync(path.join(instanceRoot, '.env'), 'utf8').split('\n')) {
+          const m = line.match(/^([A-Z][A-Z0-9_]*)=(\d+)\s*$/)
+          if (!m || !/PORT/.test(m[1])) continue
+          const tokens = m[1].toLowerCase().split('_')
+          const hit = dirs.find((d) => tokens.some((t) => t.length > 2 && d.id.toLowerCase().startsWith(t)))
+          if (hit) envHints.set(Number(m[2]), hit.id)
+        }
+      } catch {}
+      const roots = [...new Set(dirs.map((d) => d.dir))]
+      for (const port of ports) {
+        if (envHints.has(port)) { map.set(port, envHints.get(port)); continue }
+        const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
+        const r = await sh(
+          `/usr/bin/grep -rnw --include='*.js' --include='*.mjs' --include='*.jsx' --include='.env' --exclude-dir=node_modules --exclude-dir=data -e ${port} ${roots.map(q).join(' ')} 2>/dev/null | head -40`,
+          { timeoutMs: 10000 },
+        )
+        // Score per module: a definition-style line (SOME_PORT constant,
+        // listen(...), createServer) outranks a prose mention of the number.
+        const score = new Map()
+        for (const line of r.stdout.split('\n')) {
+          const m = line.match(/^(.*?):\d+:(.*)$/)
+          if (!m) continue
+          const hit = dirs.find((d) => m[1].startsWith(d.dir + '/'))
+          if (!hit) continue
+          const def = /PORT|listen\(|createServer/.test(m[2]) ? 2 : 1
+          score.set(hit.id, Math.max(score.get(hit.id) || 0, def))
+        }
+        // The module doing the observing mentions ports incidentally (UI copy,
+        // comments) — drop it unless it's the only candidate.
+        if (score.size > 1) score.delete(ctx.id)
+        const best = Math.max(0, ...score.values())
+        const ids = [...score.entries()].filter(([, s]) => s === best).map(([id]) => id)
+        if (ids.length) map.set(port, ids.slice(0, 2).join(' / '))
+      }
+      slot.portOwnerCache = { key, at: Date.now(), map }
+      return map
+    }
+    router.get('/tailnet', async (req, res) => {
+      if (process.platform !== 'darwin') return res.json({ unsupported: true })
+      const bin = tsBin()
+      const port = String(ctx.port)
+      if (!bin) return res.json({ installed: false, port })
+      const st = await sh(`${JSON.stringify(bin)} status --json 2>/dev/null`, { timeoutMs: 6000 })
+      let state = null, host = null, ip = null
+      try {
+        const j = JSON.parse(st.stdout)
+        state = j.BackendState || null
+        host = (j.Self && j.Self.DNSName || '').replace(/\.$/, '') || null
+        ip = (j.TailscaleIPs || []).find((a) => a.includes('.')) || null
+      } catch {}
+      const sv = await sh(`${JSON.stringify(bin)} serve status --json 2>/dev/null`, { timeoutMs: 6000 })
+      let sharedPorts = new Set()
+      try { sharedPorts = new Set(Object.keys(JSON.parse(sv.stdout).TCP || {}).map(Number)) } catch {
+        const t = await sh(`${JSON.stringify(bin)} serve status 2>/dev/null`, { timeoutMs: 6000 })
+        if (t.stdout.includes(`:${port}`) && t.stdout.includes(`localhost:${port}`)) sharedPorts.add(Number(port))
+      }
+      const active = sharedPorts.has(Number(port))
+      const listeners = await atelierListeners()
+      const ports = listeners.map((p) => ({ ...p, shared: sharedPorts.has(p.port) }))
+      // Forwards on this machine that aren't any of this Atelier's listeners —
+      // counted so nothing is silently hidden, but never listed here.
+      const others = [...sharedPorts].filter((x) => !listeners.some((p) => p.port === x)).length
+      const desc = tailnetDescriptor(bin)
+      res.json({
+        installed: true, state, active, port, host, ip, ports, others,
+        urls: active ? [host && `http://${host}:${port}`, ip && `http://${ip}:${port}`].filter(Boolean) : [],
+        agent: { label: desc.label, ...(await agentRuntime(desc.label) || {}) },
+      })
+    })
+    router.post('/tailnet/:action', async (req, res) => {
+      if (process.platform !== 'darwin') return res.json({ ok: false, log: 'macOS only' }, 400)
+      const bin = tsBin()
+      if (!bin) return res.json({ ok: false, log: 'Tailscale is not installed' }, 400)
+      const port = String(ctx.port)
+      const { action } = req.params
+      if (action === 'enable' || action === 'disable') {
+        let target = port
+        try { const b = await req.json(); if (b && b.port) target = String(Number(b.port)) } catch { /* no body → instance port */ }
+        if (!/^\d+$/.test(target)) return res.json({ ok: false, log: `not a port: ${target}` }, 400)
+        // Only this Atelier's own listeners may be shared; turning a forward
+        // OFF is always allowed (cleaning up a stale one must never be blocked).
+        if (action === 'enable' && !(await atelierListeners()).some((p) => String(p.port) === target)) {
+          return res.json({ ok: false, log: `port ${target} isn't one of this Atelier's listeners` }, 400)
+        }
+        const cmd = action === 'enable'
+          ? `${JSON.stringify(bin)} serve --bg --tcp ${target} tcp://localhost:${target}`
+          : `${JSON.stringify(bin)} serve --tcp=${target} off`
+        const r = await sh(cmd, { timeoutMs: 15000 })
+        logEvent(r.code === 0 ? 'ok' : 'warn', action === 'enable' ? `Tailnet sharing on (:${target})` : `Tailnet sharing off (:${target})`)
+        return res.json({ ok: r.code === 0, log: (r.stdout + r.stderr).trim() })
+      }
+      if (action === 'agent-install' || action === 'agent-uninstall') {
+        const r = await managedPlistAction(tailnetDescriptor(bin), action === 'agent-install' ? 'install' : 'uninstall')
+        logEvent(r.ok ? 'ok' : 'warn', action === 'agent-install' ? 'Tailnet login re-assert installed' : 'Tailnet login re-assert removed')
+        return res.json(r)
+      }
+      res.json({ ok: false, log: 'action must be enable|disable|agent-install|agent-uninstall' }, 400)
     })
 
     // ---- activity log ----------------------------------------------------------

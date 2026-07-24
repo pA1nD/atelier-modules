@@ -87,6 +87,6 @@ export function okShape(c) {
   if ('port' in c && c.port != null && !Number.isFinite(Number(c.port))) return '“port” must be a number.'
   if ('hotReload' in c && typeof c.hotReload !== 'boolean') return '“hotReload” must be true or false.'
   if ('auth' in c && !(c.auth === false || typeof c.auth === 'string')) return '“auth” must be false or a module id.'
-  for (const k of ['label', 'baseUrl', 'defaultChrome']) if (k in c && c[k] != null && typeof c[k] !== 'string') return `“${k}” must be text.`
+  for (const k of ['label', 'baseUrl', 'defaultChrome', 'host']) if (k in c && c[k] != null && typeof c[k] !== 'string') return `“${k}” must be text.`
   return null
 }

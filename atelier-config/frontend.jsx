@@ -5,6 +5,7 @@
 //   'apps'    → Apps & Workspaces (drag between workspaces, link/unlink, themes)
 //   'system'  → System check (package managers + versions)
 //   'daemon'  → Start at login (this instance as a launchd LaunchAgent)
+//   'tunnel'  → Cloudflare tunnel (public hostnames via cloudflared, moved from devops)
 //   'logs'    → Activity (live server output over the shell WS)
 // Icons are inline lucide geometry (./icons.js) — catalyst exposes no icon runtime.
 
@@ -51,6 +52,8 @@ const CONFIG_FIELDS = [
     help: 'The theme (a “chrome”) Atelier uses by default. Apps can pin their own with meta.chrome.' },
   { key: 'port', group: 'Network', label: 'Port', icon: 'plug', type: 'number', accent: '#06b6d4', placeholder: '1844', restart: true, dflt: '1844',
     help: 'The local web port — you’ll open Atelier at http://localhost:<port>.' },
+  { key: 'host', group: 'Network', label: 'Network access', icon: 'wifi', type: 'text', accent: '#6366f1', placeholder: '0.0.0.0', restart: true, dflt: '127.0.0.1 (this machine only)',
+    help: 'Empty keeps Atelier private to this machine. 0.0.0.0 opens it to everyone on your network — pair with sign-in. A specific IP opens just that network.' },
   { key: 'baseUrl', group: 'Network', label: 'Public address', icon: 'globe', type: 'text', accent: '#10b981', placeholder: 'https://atelier.example.com', restart: true, dflt: 'http://localhost:<port>',
     help: 'Only needed behind a domain or tunnel — the address others use to reach this Atelier.' },
   { key: 'hotReload', group: 'Behavior', label: 'Live reload', icon: 'refresh-cw', type: 'bool', accent: '#f59e0b', restart: true, dflt: 'on',
@@ -64,6 +67,8 @@ const CONFIG_TABS = [
   { id: 'apps', label: 'Apps & Workspaces', icon: 'blocks', desc: 'What’s mounted, and where' },
   { id: 'system', label: 'System check', icon: 'stethoscope', desc: 'Required tools & versions' },
   { id: 'daemon', label: 'Start at login', icon: 'log-in', desc: 'Keep this instance running' },
+  { id: 'tailnet', label: 'Tailnet sharing', icon: 'wifi', desc: 'Reach this Atelier via Tailscale' },
+  { id: 'tunnel', label: 'Cloudflare tunnel', icon: 'globe', desc: 'Where public hostnames resolve' },
   { id: 'logs', label: 'Activity', icon: 'scroll-text', desc: 'Live server output' },
 ]
 const RESTART_LABELS = Object.fromEntries(CONFIG_FIELDS.map((f) => [f.key, f.label]))
@@ -661,6 +666,274 @@ function InstalledAgentRow({ row }) {
   )
 }
 
+// One atelier-owned listener: share state, bind warning, per-port controls.
+function PortRow({ p, host, busy, onShare, onStop }) {
+  const [copied, setCopied] = useState(false)
+  const url = `http://${host}:${p.port}`
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1400) } catch {}
+  }
+  return (
+    <div className="flex items-center gap-3 py-2.5">
+      <Dot color={p.shared ? 'emerald' : 'zinc'} ping={p.shared} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-sm text-zinc-800 dark:text-zinc-200">:{p.port}</span>
+          <span className="truncate text-sm text-zinc-500 dark:text-zinc-400">{p.label}</span>
+          {p.lanOpen && (
+            <span title="This listener binds all interfaces (0.0.0.0) — it's reachable from your local network on its own, outside tailnet sharing." className="shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">LAN-open</span>
+          )}
+        </div>
+        {p.shared && <div className="truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500">{url}</div>}
+      </div>
+      {p.shared && (
+        <button onClick={copy} title="Copy tailnet address" className="shrink-0 cursor-pointer rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-950/[0.06] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200">
+          <Icon name={copied ? 'check' : 'copy'} size={13} className={copied ? 'text-emerald-500' : ''} />
+        </button>
+      )}
+      {p.shared
+        ? <Button outline onClick={onStop} disabled={busy}>Stop</Button>
+        : <Button onClick={onShare} disabled={busy}>Share</Button>}
+    </div>
+  )
+}
+
+// Share this instance over Tailscale: tailscale listens on the tailnet address
+// and forwards to localhost — atelier itself stays loopback-bound, the LAN
+// stays blocked. Everything degrades gracefully when Tailscale is absent.
+function Tailnet() {
+  const [d, setD] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [log, setLog] = useState(null)
+  const load = useCallback(async () => {
+    try { setD(await (await fetch(`${self.api}/tailnet`, { cache: 'no-store' })).json()) } catch {}
+  }, [])
+  useEffect(() => {
+    load()
+    const t = setInterval(() => { if (!document.hidden) load() }, 30000)
+    return () => clearInterval(t)
+  }, [load])
+  const act = async (action, port) => {
+    setBusy(true); setLog(null)
+    try {
+      const r = await (await fetch(`${self.api}/tailnet/${action}`, {
+        method: 'POST',
+        ...(port ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port }) } : {}),
+      })).json()
+      if (!r.ok) setLog(r.log || 'That didn’t work — no details were returned.')
+    } catch (e) { setLog(String(e.message || e)) }
+    setBusy(false); load()
+  }
+
+  if (!d) return <Loading />
+  if (d.unsupported) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Tailnet sharing uses Tailscale on macOS — this instance runs elsewhere.</p>
+  if (!d.installed) {
+    return (
+      <div className="rounded-2xl border border-zinc-950/10 bg-white p-5 shadow-sm shadow-zinc-950/[0.03] dark:border-white/10 dark:bg-white/[0.02] dark:shadow-none">
+        <div className="flex items-center gap-2">
+          <Dot color="zinc" />
+          <h3 className="text-base font-semibold text-zinc-950 dark:text-white">Tailscale isn’t installed</h3>
+        </div>
+        <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          Tailnet sharing lets people on your Tailscale network open this Atelier while it stays private to this machine — no open ports on your LAN.
+          Install Tailscale from <a href="https://tailscale.com/download" target="_blank" rel="noreferrer" className="text-blue-600 underline decoration-blue-600/30 underline-offset-2 dark:text-blue-400">tailscale.com</a> and come back here.
+        </p>
+      </div>
+    )
+  }
+  const running = d.state === 'Running'
+  return (
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-zinc-950/10 bg-white p-5 shadow-sm shadow-zinc-950/[0.03] dark:border-white/10 dark:bg-white/[0.02] dark:shadow-none">
+        <div className="flex items-center gap-2">
+          <Dot color={d.active ? 'emerald' : 'zinc'} ping={d.active} />
+          <h3 className="text-base font-semibold text-zinc-950 dark:text-white">Tailnet sharing</h3>
+        </div>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          Everything this Atelier listens on — the app itself and each module's sidecar. Share a port and Tailscale listens on your tailnet address, forwarding to it; the port itself stays private to this machine and your local network sees nothing. Each share is its own decision.
+        </p>
+        {!running && (
+          <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            Tailscale is installed but {d.state ? `“${d.state}”` : 'not running'} — start it (and sign in) before sharing.
+          </p>
+        )}
+        <div className="mt-3 divide-y divide-zinc-950/[0.06] dark:divide-white/[0.06]">
+          {(d.ports || []).map((p) => (
+            <PortRow key={p.port} p={p} host={d.host || d.ip} busy={busy}
+              onShare={() => act('enable', p.port)} onStop={() => act('disable', p.port)} />
+          ))}
+        </div>
+        {d.others > 0 && (
+          <p className="mt-3 text-xs text-zinc-400 dark:text-zinc-500">
+            {d.others} other Tailscale forward{d.others === 1 ? '' : 's'} on this machine {d.others === 1 ? 'is' : 'are'} not from this Atelier and {d.others === 1 ? 'isn’t' : 'aren’t'} shown here.
+          </p>
+        )}
+        {log && <pre className="mt-3 overflow-auto rounded-lg border border-red-500/30 bg-red-500/[0.06] px-3 py-2 font-mono text-[11px] text-red-600 dark:text-red-400">{log}</pre>}
+      </div>
+
+      <div className="rounded-2xl border border-zinc-950/10 bg-white p-5 shadow-sm shadow-zinc-950/[0.03] dark:border-white/10 dark:bg-white/[0.02] dark:shadow-none">
+        <div className="flex items-center gap-2">
+          <Dot color={d.agent && d.agent.installed ? 'emerald' : 'zinc'} />
+          <h3 className="text-base font-semibold text-zinc-950 dark:text-white">Re-assert at login</h3>
+        </div>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          Sharing survives reboots on its own — Tailscale remembers it. This optional login task re-applies it in case Tailscale was reset or signed out, and does nothing on machines without Tailscale. It’s separate from Atelier’s own start.
+        </p>
+        {d.agent && <div className="mt-1 truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500" title={d.agent.label}>{d.agent.label}</div>}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {!(d.agent && d.agent.installed) && <Button onClick={() => act('agent-install')} disabled={busy}>{busy ? 'Working…' : 'Install login task'}</Button>}
+          {d.agent && d.agent.installed && <Button outline onClick={() => act('agent-uninstall')} disabled={busy}>{busy ? 'Working…' : 'Remove login task'}</Button>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ---- cloudflare tunnel (public hostnames via cloudflared) --------------------- */
+// local leg: who binds the ingress's target port on THIS host.
+function localChip(local) {
+  const map = {
+    mine:          { cls: 'text-emerald-600 dark:text-emerald-400', label: 'mine' },
+    'other-local': { cls: 'text-amber-600 dark:text-amber-400', label: 'other proc' },
+    none:          { cls: 'text-zinc-400', label: 'nothing' },
+  }
+  return map[local] || null
+}
+
+const VERDICT_DOT = { lime: 'emerald', amber: 'amber', zinc: 'zinc' }
+
+function IngressRow({ row }) {
+  const v = row.verdict
+  const c = localChip(row.local)
+  return (
+    <div className="flex items-center justify-between gap-3 py-2.5">
+      <div className="min-w-0">
+        <div className="truncate font-mono text-sm text-zinc-800 dark:text-zinc-200">
+          {row.hostname || <span className="text-zinc-400">∗ catch-all</span>}
+        </div>
+        <div className="mt-0.5 truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500">{row.service}</div>
+      </div>
+      <div className="flex shrink-0 items-center gap-4">
+        {c && (
+          <span className={cn('font-mono text-[11px]', c.cls)}>
+            local: {c.label}{row.port ? ` :${row.port}` : ''}
+          </span>
+        )}
+        {v && (
+          <span className="inline-flex items-center gap-1.5 text-xs">
+            <Dot color={VERDICT_DOT[v.color] || 'zinc'} />
+            <span className="text-zinc-600 dark:text-zinc-300">{v.label}</span>
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TunnelCard({ tunnel, busy, onAction }) {
+  // Honest empty state: no config.yml here, so this host isn't a tunnel host.
+  if (!tunnel.configured) {
+    return (
+      <div className="rounded-2xl border border-zinc-950/10 bg-white p-5 shadow-sm shadow-zinc-950/[0.03] dark:border-white/10 dark:bg-white/[0.02] dark:shadow-none">
+        <div className="flex items-center gap-2">
+          <Dot color="zinc" />
+          <h3 className="text-base font-semibold text-zinc-950 dark:text-white">{tunnel.name}</h3>
+        </div>
+        <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          No <span className="font-mono">{tunnel.configPath}</span> on this host — the tunnel isn’t set up here.
+          Any public URL that still responds is being served by another machine.
+        </p>
+      </div>
+    )
+  }
+
+  const running = tunnel.runningHere
+  return (
+    <div className="rounded-2xl border border-zinc-950/10 bg-white p-5 shadow-sm shadow-zinc-950/[0.03] dark:border-white/10 dark:bg-white/[0.02] dark:shadow-none">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Dot color={running ? 'emerald' : 'amber'} ping={running} />
+            <h3 className="truncate text-base font-semibold text-zinc-950 dark:text-white">{tunnel.name}</h3>
+          </div>
+          {tunnel.uuid && (
+            <div className="mt-1 truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500" title={tunnel.uuid}>{tunnel.uuid}</div>
+          )}
+        </div>
+        <span className={cn(
+          'shrink-0 rounded-full px-2.5 py-1 text-xs font-medium',
+          running
+            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-300'
+            : 'bg-amber-100 text-amber-800 dark:bg-amber-400/10 dark:text-amber-300',
+        )}>
+          {running ? 'running here' : 'not running here'}
+        </span>
+      </div>
+
+      {(tunnel.version || tunnel.connectors != null) && (
+        <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
+          {tunnel.version && <span>cloudflared <span className="font-mono text-zinc-700 dark:text-zinc-300">{tunnel.version}</span></span>}
+          {tunnel.connectors != null && (
+            <span>
+              {tunnel.connectors} connector{tunnel.connectors === 1 ? '' : 's'}
+              {tunnel.connectors > 1 && <span className="ml-1 text-amber-600 dark:text-amber-400">⚠ multi-host</span>}
+            </span>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 divide-y divide-zinc-950/[0.06] border-t border-zinc-950/[0.06] dark:divide-white/[0.06] dark:border-white/[0.06]">
+        {tunnel.ingress.map((row, i) => <IngressRow key={i} row={row} />)}
+      </div>
+
+      <DaemonControls label={tunnel.id} daemon={tunnel.daemon} busy={busy} onAction={onAction} />
+    </div>
+  )
+}
+
+// Where each public hostname resolves — and whether this host is the one
+// serving it. Fetch once + listen; the 45s visible re-fetch keeps the backend
+// probe awake (it idles without viewers) and heals frames lost on a reconnect.
+function Tunnel() {
+  const [data, setData] = useState(null)
+  const [busy, setBusy] = useState(() => new Set())
+  const load = useCallback(async () => {
+    try { setData(await (await fetch(`${self.api}/tunnels`, { cache: 'no-store' })).json()) }
+    catch { setData((prev) => prev || { tunnels: [] }) }
+  }, [])
+  useEffect(() => {
+    let last = Date.now()
+    load()
+    const t = setInterval(() => { if (!document.hidden) { last = Date.now(); load() } }, 45000)
+    const onVis = () => { if (!document.hidden && Date.now() - last > 5000) { last = Date.now(); load() } }
+    document.addEventListener('visibilitychange', onVis)
+    const unsub = self.subscribe((f) => { if (f.type === 'tunnels') setData({ tunnels: f.tunnels || [], unsupported: f.unsupported }) })
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); unsub() }
+  }, [load])
+  const onAction = useCallback(async (id, action) => {
+    setBusy((prev) => new Set(prev).add(id))
+    try { await fetch(`${self.api}/tunnels/${encodeURIComponent(id)}/daemon/${action}`, { method: 'POST' }) } catch {}
+    await load()
+    setBusy((prev) => { const n = new Set(prev); n.delete(id); return n })
+  }, [load])
+
+  if (!data) return <Loading />
+  if (data.unsupported) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Cloudflare tunnels use launchd on macOS — this instance runs elsewhere.</p>
+  const tunnels = data.tunnels || []
+  return (
+    <div className="max-w-2xl space-y-5">
+      <div>
+        <Heading level={2} className="!text-lg">Cloudflare tunnel</Heading>
+        <Text className="!mt-0.5 !text-[13px]">Where each public hostname resolves — and whether this host is the one serving it.</Text>
+      </div>
+      {tunnels.length === 0 && (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">No tunnels declared — add one to <span className="font-mono">data/tunnels.json</span> in this module’s folder.</p>
+      )}
+      {tunnels.map((t) => <TunnelCard key={t.id} tunnel={t} busy={busy.has(t.id)} onAction={onAction} />)}
+    </div>
+  )
+}
+
 function Daemon() {
   const [data, setData] = useState(null)
   const [busy, setBusy] = useState(() => new Set())
@@ -943,7 +1216,7 @@ function Logs() {
 
 /* ---- the settings page --------------------------------------------------------- */
 function Configure({ sub, navigate }) {
-  const tab = ['apps', 'system', 'daemon', 'logs'].includes(sub) ? sub : 'general'
+  const tab = ['apps', 'system', 'daemon', 'tailnet', 'tunnel', 'logs'].includes(sub) ? sub : 'general'
   const [orig, setOrig] = useState(null)
   const [cfg, setCfg] = useState(null)
   const [err, setErr] = useState(null)
@@ -1105,6 +1378,10 @@ function Configure({ sub, navigate }) {
           {tab === 'system' && <SystemCheck />}
 
           {tab === 'daemon' && <Daemon />}
+
+          {tab === 'tailnet' && <Tailnet />}
+
+          {tab === 'tunnel' && <Tunnel />}
 
           {tab === 'logs' && <Logs />}
         </div>

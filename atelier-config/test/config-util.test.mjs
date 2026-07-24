@@ -75,11 +75,12 @@ test('workspacesInConfig', () => {
 
 test('okShape accepts valid + rejects malformed', () => {
   assert.equal(okShape({ port: 1855, modules: ['dock'], hotReload: true, auth: false }), null)
-  assert.equal(okShape({ defaultChrome: 'x', baseUrl: 'u', label: 'n' }), null)
+  assert.equal(okShape({ defaultChrome: 'x', baseUrl: 'u', label: 'n', host: '0.0.0.0' }), null)
   assert.match(okShape([1, 2]), /JSON object/)
   assert.match(okShape({ modules: 'oops' }), /list/)
   assert.match(okShape({ port: 'abc' }), /number/)
   assert.match(okShape({ hotReload: 'yes' }), /true or false/)
   assert.match(okShape({ auth: 5 }), /false or a module id/)
   assert.match(okShape({ defaultChrome: 3 }), /text/)
+  assert.match(okShape({ host: 3 }), /text/)
 })

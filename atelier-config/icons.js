@@ -41,4 +41,5 @@ export const ICONS = {
   'server': [["rect",{"width":"20","height":"8","x":"2","y":"2","rx":"2","ry":"2","key":"ngkwjq"}],["rect",{"width":"20","height":"8","x":"2","y":"14","rx":"2","ry":"2","key":"iecqi9"}],["line",{"x1":"6","x2":"6.01","y1":"6","y2":"6","key":"16zg32"}],["line",{"x1":"6","x2":"6.01","y1":"18","y2":"18","key":"nzw8ys"}]],
   'settings-2': [["path",{"d":"M14 17H5","key":"gfn3mx"}],["path",{"d":"M19 7h-9","key":"6i9tg"}],["circle",{"cx":"17","cy":"17","r":"3","key":"18b49y"}],["circle",{"cx":"7","cy":"7","r":"3","key":"dfmy0x"}]],
   'square': [["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","key":"afitv7"}]],
+  'wifi': [["path",{"d":"M12 20h.01","key":"zekei9"}],["path",{"d":"M2 8.82a15 15 0 0 1 20 0","key":"dnpr2z"}],["path",{"d":"M5 12.859a10 10 0 0 1 14 0","key":"1x1e6c"}],["path",{"d":"M8.5 16.429a5 5 0 0 1 7 0","key":"1bycff"}]],
 }
