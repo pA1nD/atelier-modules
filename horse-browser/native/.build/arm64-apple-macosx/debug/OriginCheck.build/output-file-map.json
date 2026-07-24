@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/primary.swiftdeps"
+  },
+  "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/OriginCheck/main.swift": {
+    "dependencies": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/main.d",
+    "object": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/main.swift.o",
+    "swiftmodule": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/main.swiftdeps",
+    "diagnostics": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/main.dia"
+  }
+}

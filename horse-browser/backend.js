@@ -1,13 +1,15 @@
 /* horse-browser — backend (extracted from claude5iq's backend.js).
  *
  * Instruments read the REAL machine and report it live: the horse-browser CDP
- * on :9223 (version, tab count, PID), the browser-harness daemons (each one an
- * agent session driving the browser, name-matched by BU_NAME callsign), the
- * running Claude sessions (as codenames, with cwd), and the tab→session map
- * from the tab-grouper extension. Hands: install browser-harness (uv/pipx from
- * GitHub), install/update horse-browser (npm — @pa1nd/horse-browser), and
- * apply the CLAUDE.md browser config (the package's claude-md.sh) — streaming
- * every line over the shell WebSocket.
+ * on :9223 (version, tab count, PID), the horse-harness daemons (each one an
+ * agent session driving the browser, matched back to its session via the
+ * HORSE_SESSION env), the running Claude sessions (as codenames, with cwd),
+ * and the tab→session map from the tab-grouper extension. Hands: install/
+ * update horse-browser (npm — @pa1nd/horse-browser, which vendors the harness
+ * and builds its Python venv in postinstall), rebuild that venv
+ * (`horse-browser harness-setup`), and apply the browser rule file
+ * (~/.claude/rules/horse-browser.md, written by the package's claude-md.sh) —
+ * streaming every line over the shell WebSocket.
  *
  * Pure Node builtins, no deps. Outward actions refuse to run without an
  * explicit confirm; children are tracked and killed on hot-reload + shutdown.
@@ -20,15 +22,17 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { mountCredentials } from './credentials.js'
 
 const execFileP = promisify(execFile)
 const HOME = os.homedir()
 const PROJECTS_DIR = path.join(HOME, '.claude', 'projects')
 const UUID_JSONL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/
 const UUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
-const CDP = 'http://127.0.0.1:9223'
+const CDP = `http://127.0.0.1:${process.env.HB_CDP_PORT || '9223'}`
 const HB_NPM = '@pa1nd/horse-browser'
-const GLOBAL_CLAUDE_MD = path.join(HOME, '.claude', 'CLAUDE.md')
+const DESKPAD_APP = '/Applications/DeskPad.app'
+const HB_RULES_MD = path.join(HOME, '.claude', 'rules', 'horse-browser.md')
 const ACTIVE_MS = 4 * 60 * 1000           // transcript touched this recently ⇒ mid-turn ("working now")
 const RUNNING_MS = 30 * 60 * 1000         // ...this recently ⇒ likely still open
 const RECENT_MS = 36 * 60 * 60 * 1000     // discovery window for the session list
@@ -142,6 +146,91 @@ async function tabGroups() {
   finally { try { ws && ws.close() } catch {} }
 }
 
+/* ── display & health (folded in from the retired hb-display module) ──────────
+ * Why: with the display asleep (esp. clamshell — lid closed, box kept awake by
+ * SSH) WindowServer composites nothing, so agent screenshots hang; waking a
+ * closed lid is worse (macOS re-blanks ~10s later and Chrome drops every CDP
+ * websocket on the flap — measured 2026-07-11). The clean fix is a virtual
+ * display that never sleeps — DeskPad (audited: 436 lines, sandboxed, no
+ * network entitlement). macOS-only; every probe degrades to nulls elsewhere. */
+async function displayInfo() {
+  // display census via CoreGraphics ctypes (~80ms): main-display sleep state +
+  // how many online displays aren't the built-in panel (≈ virtual/external).
+  const py = [
+    'import ctypes, json',
+    'cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")',
+    'n = ctypes.c_uint32(0)',
+    'ids = (ctypes.c_uint32 * 16)()',
+    'cg.CGGetOnlineDisplayList(16, ids, ctypes.byref(n))',
+    'ext = sum(1 for i in range(n.value) if not cg.CGDisplayIsBuiltin(ids[i]))',
+    'print(json.dumps({"asleep": bool(cg.CGDisplayIsAsleep(cg.CGMainDisplayID())), "online": n.value, "external": ext}))',
+  ].join('\n')
+  let disp = null
+  try { const { stdout } = await execFileP('python3', ['-c', py], { timeout: 4000 }); disp = JSON.parse(stdout) } catch {}
+  let clamshell = null
+  try {
+    const { stdout } = await execFileP('ioreg', ['-r', '-k', 'AppleClamshellState', '-d', '1'], { timeout: 2500 })
+    clamshell = /"AppleClamshellState" = Yes/.test(stdout)
+  } catch {}
+  return { ...(disp || {}), clamshell }
+}
+
+async function deskpadInfo() {
+  let installed = false
+  try { installed = fs.existsSync(DESKPAD_APP) } catch {}
+  let running = false
+  try { const { stdout } = await execFileP('pgrep', ['-x', 'DeskPad'], { timeout: 1500 }); running = !!stdout.trim() } catch {}
+  return { installed, running, display: await displayInfo() }
+}
+
+/* paintProbe — the ground truth for "do screenshots work right now": a REAL
+ * 1×1 Page.captureScreenshot against the horse browser, timed. It needs a
+ * composited frame, so it hangs exactly when nothing is being drawn (display
+ * asleep, wedged GPU) — a miss past the deadline means no compositing, not a
+ * slow page. Read-only: probes, never heals. */
+async function paintProbe(timeoutMs = 3500) {
+  let pages = []
+  try {
+    const r = await fetch(`${CDP}/json/list`, { signal: AbortSignal.timeout(1500) })
+    if (!r.ok) return { status: 'no-browser', ms: null }
+    pages = (await r.json()).filter((t) => t.type === 'page' && t.webSocketDebuggerUrl)
+  } catch { return { status: 'no-browser', ms: null } }
+  if (!pages.length) return { status: 'no-page', ms: null }
+  const t0 = Date.now()
+  return await new Promise((resolve) => {
+    let ws, done = false
+    const finish = (status) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      try { ws && ws.close() } catch {}
+      resolve({ status, ms: status === 'ok' ? Date.now() - t0 : null })
+    }
+    const timer = setTimeout(() => finish('hang'), timeoutMs)
+    try { ws = new WebSocket(pages[0].webSocketDebuggerUrl) } catch { return finish('no-page') }
+    ws.addEventListener('open', () => ws.send(JSON.stringify({ id: 1, method: 'Page.captureScreenshot', params: { format: 'png', clip: { x: 0, y: 0, width: 1, height: 1, scale: 1 } } })))
+    ws.addEventListener('message', (e) => { try { if (JSON.parse(e.data).id === 1) finish('ok') } catch {} })
+    ws.addEventListener('error', () => finish('no-page'))
+  })
+}
+
+/* heal.log — one tab-separated line per incident, written by bin/horse-browser;
+ * we only read it. Format: ts \t event \t k=v context fields. */
+function healLog(limit = 200) {
+  const p = path.join(HOME, '.config', 'horse-browser', 'heal.log')
+  let lines = []
+  try { lines = fs.readFileSync(p, 'utf8').split('\n').filter(Boolean) } catch {}
+  const total = lines.length
+  const entries = lines.slice(-limit).map((ln) => {
+    const [ts, event, ...rest] = ln.split('\t')
+    const detail = rest.join(' ').trim()
+    const fields = {}
+    for (const m of detail.matchAll(/([A-Za-z_]+)=(\S+)/g)) fields[m[1]] = m[2]
+    return { ts, event: event || 'unknown', detail, fields }
+  }).reverse()
+  return { path: p.replace(HOME, '~'), total, entries }
+}
+
 async function listeningPids(port) {
   try {
     const { stdout } = await execFileP('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { timeout: 2500 })
@@ -206,25 +295,35 @@ function listSessions() {
   return out
 }
 
-// browser-harness: installed? + how many live harness daemons (≈ agent sessions
-// connected to the browser; each BU_NAME gets its own persistent daemon).
+// horse-harness: the CDP driver vendored inside the horse-browser package —
+// "installed" means the package's harness venv is built (npm postinstall, or
+// `horse-browser harness-setup`). Live daemons ≈ agent sessions connected to
+// the browser; pre-0.9 `browser_harness.daemon` leftovers still match, flagged
+// legacy so the wall can show them for what they are.
 async function harnessInfo() {
-  // each daemon's BU_NAME is `cc-<session id>`, so its last 4 chars are the agent's callsign —
-  // that's how we name-match a daemon back to the agent session that started it.
+  // each daemon carries its agent's session id in HORSE_SESSION (plus a BU_NAME
+  // like `hb-<sess-tail>[-lane]`); the session id's last 4 chars are the
+  // callsign the wall's codenames use — that's how a daemon name-matches back
+  // to the agent session that started it. The `-m` anchor keeps pgrep from
+  // matching shells that merely mention the daemon in their command text.
   let pids = []
-  try { const { stdout } = await execFileP('pgrep', ['-f', 'browser_harness.daemon'], { timeout: 2500 }); pids = stdout.split('\n').map((s) => Number(s.trim())).filter(Boolean) } catch {}
-  const daemons = pids.map((pid) => ({ pid, name: null, callsign: null }))
+  try { const { stdout } = await execFileP('pgrep', ['-f', '\\-m (browser|horse)_harness\\.daemon'], { timeout: 2500 }); pids = stdout.split('\n').map((s) => Number(s.trim())).filter(Boolean) } catch {}
+  const daemons = pids.map((pid) => ({ pid, name: null, callsign: null, legacy: false }))
   if (pids.length) {
     try {
       const { stdout } = await execFileP('ps', ['eww', '-p', pids.join(',')], { timeout: 3000 })
       for (const line of stdout.split('\n')) {
         const pid = Number((line.trim().match(/^\d+/) || [])[0]); if (!pid) continue
-        const m = line.match(/\bBU_NAME=(\S+)/), d = daemons.find((x) => x.pid === pid)
-        if (d && m) { d.name = m[1]; d.callsign = m[1].slice(-4).toUpperCase() }
+        const d = daemons.find((x) => x.pid === pid); if (!d) continue
+        d.legacy = /browser_harness\.daemon/.test(line)
+        const bu = line.match(/\bBU_NAME=(\S+)/); if (bu) d.name = bu[1]
+        const sess = line.match(/\bHORSE_SESSION=(\S+)/)
+        const tail = sess ? sess[1] : (d.name || '')
+        if (tail) d.callsign = tail.slice(-4).toUpperCase()
       }
     } catch {}
   }
-  return { installed: !!findOnPath('browser-harness'), sessions: daemons.length, daemons }
+  return { installed: harnessReady(), sessions: daemons.length, daemons }
 }
 
 // compare two version strings — a >= b ? (null if either is unknown)
@@ -259,12 +358,7 @@ function fetchJson(url, ms = 8000) {
     req.on('error', reject)
   })
 }
-async function latestHarnessVersion() { const d = await fetchJson('https://pypi.org/pypi/browser-harness/json'); return (d && d.info && d.info.version) || null }
 async function latestChromeVersion() { const d = await fetchJson('https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json'); return (d && d.channels && d.channels.Stable && d.channels.Stable.version) || null }
-async function harnessVersion() {
-  const bin = findOnPath('browser-harness'); if (!bin) return null
-  try { const { stdout } = await execFileP(bin, ['--version'], { timeout: 3000 }); return (stdout.match(/\d+\.\d+\.\d+/) || [stdout.trim().split('\n')[0]])[0] || null } catch { return null }
-}
 
 /* ── horse-browser via npm ──────────────────────────────────────────────────
  * The launcher on PATH resolves (through the npm bin symlink, or a dev-repo
@@ -281,13 +375,19 @@ function hbVersion() {
   const root = hbPackageRoot(); if (!root) return null
   try { return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version || null } catch { return null }
 }
+// the vendored harness is ready when the package's venv python exists — built
+// by npm postinstall / install.sh, rebuildable via `horse-browser harness-setup`.
+function harnessReady() {
+  const root = hbPackageRoot(); if (!root) return false
+  try { fs.accessSync(path.join(root, 'harness', '.venv', 'bin', 'python3'), fs.constants.X_OK); return true } catch { return false }
+}
 async function latestHorseVersion() {
   const d = await fetchJson('https://registry.npmjs.org/' + encodeURIComponent(HB_NPM))
   return (d && d['dist-tags'] && d['dist-tags'].latest) || null
 }
 
 // horse-browser ships claude-md.sh in its package root — it installs/refreshes the
-// browser-playbook @-import in ~/.claude/CLAUDE.md.
+// browser rule file at ~/.claude/rules/horse-browser.md (loaded like CLAUDE.md).
 function hbClaudeMdScript() {
   const root = hbPackageRoot(); if (!root) return null
   const p = path.join(root, 'claude-md.sh')
@@ -296,22 +396,22 @@ function hbClaudeMdScript() {
 async function browserConfigInfo() {
   const script = hbClaudeMdScript()
   if (!script) return { scriptAvailable: false, upToDate: null }
-  // `claude-md.sh check` exits 0 when the import block + symlink are current, non-zero when drifted.
+  // `claude-md.sh check` exits 0 when the rule file + symlink are current, non-zero when drifted.
   try { await execFileP('bash', [script, 'check'], { timeout: 5000 }); return { scriptAvailable: true, upToDate: true } }
   catch { return { scriptAvailable: true, upToDate: false } }
 }
 
 // version status for every tool the module installs — installed vs upstream, and whether a clean
-// update is available. Updates are always a fresh install from the source of truth (uv / npm).
+// update is available. Updates are always a fresh install from the source of truth (npm).
 async function computeVersions() {
-  const [bh, bhL, hbL, cfg] = await Promise.all([
-    harnessVersion(), latestHarnessVersion().catch(() => null),
+  const [hbL, cfg] = await Promise.all([
     latestHorseVersion().catch(() => null),
     browserConfigInfo().catch(() => ({ scriptAvailable: false, upToDate: null })),
   ])
   const hb = hbVersion()
   return {
-    'browser-harness': { installed: !!findOnPath('browser-harness'), version: bh, latest: bhL, upToDate: verGE(bh, bhL), action: 'install-browser-harness', via: 'PyPI · uv tool' },
+    // the vendored harness isn't tracked separately — it IS the package; its
+    // venv readiness rides in snapshot.harness.installed instead.
     'horse-browser':   { installed: !!findOnPath('horse-browser'), version: hb, latest: hbL, upToDate: verGE(hb, hbL), action: 'install-horse-browser', via: 'npm' },
     'browser-config':  { scriptAvailable: cfg.scriptAvailable, installed: cfg.scriptAvailable && cfg.upToDate === true, upToDate: cfg.upToDate, action: 'install-browser-config', via: 'claude-md.sh' },
   }
@@ -328,18 +428,16 @@ async function softwareVersions() {
   return _verVal
 }
 
-/* ── what agents actually read — the managed CLAUDE.md block and the skill
- *    docs it @-imports. claude-md.sh keeps ONE block between
- *    `<!-- horse-browser:begin -->` / `<!-- horse-browser:end -->` markers in
- *    ~/.claude/CLAUDE.md; the block imports the playbooks, and every Claude
- *    Code session loads them at start. Parsed live so the page shows the
- *    exact chain (including the version-agnostic symlink into the installed
- *    browser-harness package). */
+/* ── what agents actually read — ONE self-contained rule file at
+ *    ~/.claude/rules/horse-browser.md (claude-md.sh copies the package's
+ *    RULE.md verbatim; rules files load into every Claude Code session at
+ *    start exactly like CLAUDE.md) plus ONE on-demand manual (the package's
+ *    MANUAL.md, printed by `horse-browser skill` — never in the always-on
+ *    context). No @-imports since v0.9. Both parsed live so the page shows
+ *    the exact text agents get. */
 // which installed package a doc's REAL path lives in — so the page can say
-// where each playbook came from and which command put it there.
+// where each doc came from and which command put it there.
 function classifyDocSource(realAbs) {
-  if (/\/uv\/tools\/browser-harness\//.test(realAbs)) return { pkg: 'browser-harness', via: 'PyPI · uv tool', cmd: 'uv tool install --python 3.12 --upgrade --force browser-harness' }
-  if (/\/pipx\/venvs\/browser-harness\//.test(realAbs)) return { pkg: 'browser-harness', via: 'PyPI · pipx', cmd: 'pipx install --force browser-harness' }
   const hbRoot = hbPackageRoot()
   if (hbRoot && (realAbs === hbRoot || realAbs.startsWith(hbRoot + path.sep))) return { pkg: HB_NPM, via: 'npm', cmd: 'npm install -g ' + HB_NPM }
   return null
@@ -347,22 +445,11 @@ function classifyDocSource(realAbs) {
 
 function agentDocs() {
   const short = (p) => p.replace(HOME, '~')
-  const out = { blockPresent: false, blockPath: short(GLOBAL_CLAUDE_MD), blockTitle: null, maintainer: null, docs: [] }
+  const out = { blockPresent: false, blockPath: short(HB_RULES_MD), blockTitle: null, maintainer: null, docs: [] }
   const cm = hbClaudeMdScript()
   if (cm) out.maintainer = short(cm)
-  let txt = ''
-  try { txt = fs.readFileSync(GLOBAL_CLAUDE_MD, 'utf8') } catch { return out }
-  const b = txt.indexOf('<!-- horse-browser:begin')
-  const e = txt.indexOf('<!-- horse-browser:end')
-  if (b === -1 || e === -1 || e < b) return out
-  out.blockPresent = true
-  const block = txt.slice(b, e)
-  const h1 = /^#\s+(.+?)\s*$/m.exec(block)
-  out.blockTitle = h1 ? h1[1] : null
-  const imports = [...block.matchAll(/^@(\S+)\s*$/gm)].map((m) => m[1])
-  out.docs = imports.map((imp) => {
-    const p = /^~(?=\/|$)/.test(imp) ? HOME + imp.slice(1) : imp
-    const d = { import: imp, path: short(p), realPath: null, exists: false, bytes: 0, lines: 0, title: null, headings: [], source: null }
+  const read = (p, extra) => {
+    const d = { path: short(p), realPath: null, exists: false, bytes: 0, lines: 0, title: null, headings: [], source: null, ...extra }
     try {
       const isLink = fs.lstatSync(p).isSymbolicLink()
       const real = fs.realpathSync(p)   // resolves the doc's true home even through intermediate links
@@ -377,21 +464,25 @@ function agentDocs() {
       d.headings = [...body.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => m[1]).slice(0, 14)
     } catch {}
     return d
-  })
+  }
+  const rule = read(HB_RULES_MD, { import: short(HB_RULES_MD), kind: 'rule' })
+  out.blockPresent = rule.exists
+  out.blockTitle = rule.title
+  out.docs = [rule]
+  const root = hbPackageRoot()
+  if (root) out.docs.push(read(path.join(root, 'MANUAL.md'), { import: 'horse-browser skill', kind: 'manual' }))
   return out
 }
 
 async function snapshot() {
-  const [cdp, harness] = await Promise.all([cdpInfo(), harnessInfo()])
+  const [cdp, harness, deskpad] = await Promise.all([cdpInfo(), harnessInfo(), deskpadInfo()])
   return {
     now: Date.now(),
+    deskpad,
     tools: {
-      'browser-harness': { installed: !!findOnPath('browser-harness') },
       'horse-browser': { installed: !!findOnPath('horse-browser') },
-      // the installers the one-click buttons need — surfaced on page load so a
+      // the installer the one-click button needs — surfaced on page load so a
       // missing prerequisite shows up with its install command, not as a failed run
-      uv: { installed: !!findOnPath('uv') },
-      pipx: { installed: !!findOnPath('pipx') },
       npm: { installed: !!findOnPath('npm') },
     },
     cdp,
@@ -406,9 +497,11 @@ function mediaDir(ctx) { return path.join(path.dirname(ctx.dataDir), 'media') }
 /* ──────────────────────────── actions ────────────────────────────────────── */
 // A registry the frontend mirrors. `danger`: safe | network | destructive.
 const ACTIONS = {
-  'install-browser-harness': { danger: 'network',     label: 'Install browser-harness' },
   'install-horse-browser':   { danger: 'network',     label: 'Install horse-browser (npm)' },
-  'install-browser-config':  { danger: 'destructive', label: 'Install CLAUDE.md browser config' },
+  'harness-setup':           { danger: 'network',     label: 'Build the harness venv' },
+  'install-browser-config':  { danger: 'destructive', label: 'Install browser rule file' },
+  'install-deskpad':         { danger: 'network',     label: 'Install DeskPad (brew)' },
+  'launch-deskpad':          { danger: 'safe',        label: 'Launch DeskPad' },
 }
 
 export default {
@@ -468,7 +561,7 @@ export default {
       catch { res.json({ error: 'unreadable' }, 500) }
     })
 
-    // the live stack: agent sessions → browser-harness daemons → chrome tabs, with a status check per column
+    // the live stack: agent sessions → horse-harness daemons → chrome tabs, with a status check per column
     const cachedLatest = async (key, fn, ttl = 20 * 60 * 1000) => {
       const c = slot.verCache[key]
       if (c && Date.now() - c.at < ttl) return c.val
@@ -493,12 +586,12 @@ export default {
       const resumeIds = new Set()
       for (const p of claudeProcs) { const m = UUID_RE.exec(p.cmd || ''); if (m) resumeIds.add(m[1]) }
       const sessions = listSessions().filter((s) => s.age <= RUNNING_MS || resumeIds.has(s.id)).slice(0, 12)
-      const [hv, latestH, latestC, tabMap] = await Promise.all([
-        cachedLatest('hv', harnessVersion, 3 * 60 * 1000),
-        cachedLatest('latestH', latestHarnessVersion),
+      const [latestH, latestC, tabMap] = await Promise.all([
+        cachedLatest('latestHb', latestHorseVersion),
         cachedLatest('latestC', latestChromeVersion),
         cachedTabGroups(cdp),
       ])
+      const hv = hbVersion()   // the harness is vendored — its version IS the package's
       const chromeVer = cdp.browser ? cdp.browser.replace(/^Chrome\//, '') : null
       return {
         harness: { running: harness.daemons.length > 0, count: harness.daemons.length, daemons: harness.daemons.slice(0, 16), version: hv, latest: latestH, upToDate: verGE(hv, latestH) },
@@ -534,6 +627,30 @@ export default {
     if (slot.watchTimer) clearInterval(slot.watchTimer)   // an async mountRoutes' teardown is dropped by the shell — never stack watchers
     slot.watchTimer = setInterval(() => { tick().catch(() => {}) }, 4000)
 
+    // the live compositing check: display census + a real timed screenshot probe.
+    // Runs on page open and on the Recheck button — not on the snapshot poll
+    // (each check is a real capture; on a broken box it costs the full timeout).
+    router.get('/compositing', async (req, res) => {
+      const [display, probe] = await Promise.all([displayInfo(), paintProbe()])
+      res.json({ now: Date.now(), display, probe })
+    })
+
+    // heal.log — the launcher's incident journal; fetch once, then the dir
+    // watcher pushes the parsed tail on change (survives atomic saves, works
+    // before the file exists).
+    router.get('/heal-log', (req, res) => res.json(healLog()))
+    const HEAL_DIR = path.join(HOME, '.config', 'horse-browser')
+    if (slot.healWatcher) { try { slot.healWatcher.close() } catch {} }
+    let healTimer = null
+    let healWatcher = null
+    try {
+      healWatcher = slot.healWatcher = fs.watch(HEAL_DIR, (_ev, name) => {
+        if (name !== 'heal.log') return
+        clearTimeout(healTimer)
+        healTimer = setTimeout(() => ctx.broadcast({ type: 'heal-log', log: healLog() }), 300)
+      })
+    } catch {}
+
     // Serve bundled imagery from the module's media/ folder (data/ doesn't ship). basename()
     // strips any traversal; a missing file is a clean 404, never a thrown read.
     router.get('/images/:name', (req, res) => {
@@ -561,21 +678,15 @@ export default {
       }
 
       switch (id) {
-        case 'install-browser-harness': {
-          // browser-harness is on PyPI now. The flags follow the project's own
-          // install doc: --python 3.12 keeps uv from resolving an old release
-          // built for older Pythons; --upgrade --force replaces any previous
-          // tool install with the latest stable — so install and update are
-          // the same command.
-          const uv = findOnPath('uv'), pipx = findOnPath('pipx')
-          let r
-          if (uv) r = await runQuiet(id, uv, ['tool', 'install', '--python', '3.12', '--upgrade', '--force', 'browser-harness'])
-          else if (pipx) r = await runQuiet(id, pipx, ['install', '--force', 'browser-harness'])
-          else { emit(id, 'need uv (or pipx) to install — get uv at https://astral.sh/uv', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
-          slot.verCache = {}; verBust()
-          emit(id, r.ok ? '✓ browser-harness installed from PyPI' : `✗ install failed (exit ${r.code})`, r.ok ? 'ok' : 'stderr')
-          done(id, { ok: r.ok }); tickNow()
-          return res.json({ ok: r.ok })
+        case 'harness-setup': {
+          // the harness is vendored in the horse-browser package; harness-setup
+          // (re)builds its Python venv (uv when present, else python3 ≥ 3.11) —
+          // the same thing npm's postinstall does. Safe to re-run anytime.
+          const hb = findOnPath('horse-browser')
+          if (!hb) { emit(id, 'horse-browser not found — install it first (npm install -g @pa1nd/horse-browser)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
+          const r = await runStreaming(id, hb, ['harness-setup'])
+          slot.verCache = {}; verBust(); tickNow()
+          return res.json(r)
         }
         case 'install-horse-browser': {
           // npm is the source of truth now — install and update are the same command.
@@ -583,40 +694,70 @@ export default {
           if (!npm) { emit(id, 'npm not found — install Node.js first (https://nodejs.org)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
           const r = await runQuiet(id, npm, ['install', '-g', `${HB_NPM}@latest`])
           if (!r.ok) { emit(id, `✗ npm install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
-          emit(id, `✓ ${HB_NPM} installed from npm`, 'ok')
-          // also import the browser playbooks into ~/.claude/CLAUDE.md (idempotent, backs up) —
+          emit(id, `✓ ${HB_NPM} installed from npm (postinstall builds the vendored harness venv)`, 'ok')
+          // also write the browser rule file at ~/.claude/rules/horse-browser.md (idempotent) —
           // the config that lets agents actually drive it. claude-md.sh ships in the package.
           const cmScript = hbClaudeMdScript()
           if (cmScript) {
-            emit(id, 'importing the browser playbooks into ~/.claude/CLAUDE.md…', 'stdout')
+            emit(id, 'writing the browser rule into ~/.claude/rules/horse-browser.md…', 'stdout')
             const r2 = await runQuiet(id, 'bash', [cmScript, 'apply'])
-            emit(id, r2.ok ? '✓ CLAUDE.md browser config applied' : `⚠ claude-md.sh apply failed (exit ${r2.code}) — run "Set up" on the config row`, r2.ok ? 'ok' : 'stderr')
+            emit(id, r2.ok ? '✓ browser rule file applied' : `⚠ claude-md.sh apply failed (exit ${r2.code}) — run "Set up" on the config row`, r2.ok ? 'ok' : 'stderr')
           }
           slot.verCache = {}; verBust()
           done(id, { ok: true }); tickNow()
           return res.json({ ok: true })
         }
         case 'install-browser-config': {
-          // claude-md.sh writes the browser-playbook @-import into ~/.claude/CLAUDE.md
-          // (idempotent, backs up, re-points the version-agnostic symlink). `apply` = (re)install.
+          // claude-md.sh writes the browser rule file at ~/.claude/rules/horse-browser.md
+          // (idempotent, re-points the version-agnostic symlink). `apply` = (re)install.
           const script = hbClaudeMdScript()
           if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first', 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
           const r = await runStreaming(id, 'bash', [script, 'apply'])
           slot.verCache = {}; verBust(); tickNow()
           return res.json(r)
         }
+        case 'install-deskpad': {
+          const brew = findOnPath('brew')
+          if (!brew) { emit(id, 'brew not found — install Homebrew first (https://brew.sh)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
+          const r = await runQuiet(id, brew, ['install', '--cask', 'deskpad'])
+          if (!r.ok) { emit(id, `✗ brew install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
+          emit(id, '✓ DeskPad installed (notarized release, sha256-pinned by brew)', 'ok')
+          // launch by path — LaunchServices may not know the name seconds after install
+          const r2 = await runQuiet(id, 'open', [DESKPAD_APP])
+          emit(id, r2.ok ? '✓ DeskPad launched' : '⚠ installed but not launched — use the Launch button', r2.ok ? 'ok' : 'stderr')
+          emit(id, 'first run: approve the Screen Recording prompt once (it mirrors only its own virtual display) — then the virtual display registers', 'stdout')
+          done(id, { ok: true }); tickNow()
+          return res.json({ ok: true })
+        }
+        case 'launch-deskpad': {
+          if (!fs.existsSync(DESKPAD_APP)) { emit(id, 'DeskPad is not installed — install it first', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
+          const r = await runQuiet(id, 'open', [DESKPAD_APP])
+          emit(id, r.ok ? '✓ DeskPad launched' : `✗ open failed (exit ${r.code})`, r.ok ? 'ok' : 'stderr')
+          done(id, { ok: r.ok }); tickNow()
+          return res.json({ ok: r.ok })
+        }
         default:
           return res.json({ error: 'unhandled' }, 500)
       }
     })
 
-    ctx.log('horse-browser · night console mounted')
+    // The credential subsystem (Bitwarden broker) — folded in from hb-auth.
+    // It registers its own /broker/*, /helpers/*, /hints*, /state, /skill.md
+    // routes and manages the signed daemon; returns its own teardown. Both this
+    // and the credential watcher clear their slot timers at mount start, so a
+    // dropped async teardown (shell gap) can't stack watchers.
+    const credTeardown = mountCredentials(router, ctx)
 
-    // Teardown: stop the live-push watcher and kill any in-flight installer
-    // children on hot-reload + exit. Children are spawned detached (own process
-    // group) so we can take the whole group down — no orphaned grandchild.
+    ctx.log('horse-browser · control board mounted')
+
+    // Teardown: stop the live-push watcher + heal-log watch, the credential
+    // subsystem, and kill any in-flight installer children on hot-reload + exit.
+    // Children are spawned detached (own process group) so we take the whole group down.
     return () => {
       if (slot.watchTimer) { clearInterval(slot.watchTimer); slot.watchTimer = null }
+      clearTimeout(healTimer)
+      try { healWatcher && healWatcher.close() } catch {}
+      try { credTeardown && credTeardown() } catch {}
       for (const c of slot.children) {
         try { process.kill(-c.pid, 'SIGTERM') } catch {}
         try { c.kill('SIGTERM') } catch {}

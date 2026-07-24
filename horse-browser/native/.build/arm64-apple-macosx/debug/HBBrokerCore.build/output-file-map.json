@@ -1,0 +1,19 @@
+{
+  "": {
+    "swift-dependencies": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/primary.swiftdeps"
+  },
+  "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/KeychainBlob.swift": {
+    "dependencies": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob.d",
+    "object": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob.swift.o",
+    "swiftmodule": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob~partial.swiftmodule",
+    "swift-dependencies": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob.swiftdeps",
+    "diagnostics": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob.dia"
+  },
+  "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/Origin.swift": {
+    "dependencies": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin.d",
+    "object": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin.swift.o",
+    "swiftmodule": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin~partial.swiftmodule",
+    "swift-dependencies": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin.swiftdeps",
+    "diagnostics": "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin.dia"
+  }
+}

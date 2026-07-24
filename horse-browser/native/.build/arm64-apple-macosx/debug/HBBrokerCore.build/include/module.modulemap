@@ -1,0 +1,3 @@
+module HBBrokerCore {
+    header "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/include/HBBrokerCore-Swift.h"
+}

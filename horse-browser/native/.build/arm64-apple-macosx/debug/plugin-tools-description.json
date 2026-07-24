@@ -1,0 +1,618 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.HBBrokerCore-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "fileList" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/sources",
+      "importPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/KeychainBlob.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/Origin.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "HBBrokerCore",
+      "moduleOutputPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules/HBBrokerCore.swiftmodule",
+      "objects" : [
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob.swift.o",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j18",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/include/HBBrokerCore-Swift.h",
+        "-swift-version",
+        "5",
+        "-I",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-L",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-plugin-path",
+        "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "native"
+      ],
+      "outputFileMapPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules/HBBrokerCore.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/KeychainBlob.swift",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/Origin.swift"
+      ],
+      "tempsPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.OriginCheck-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "fileList" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/sources",
+      "importPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/OriginCheck/main.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules/HBBrokerCore.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "OriginCheck",
+      "moduleOutputPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules/OriginCheck.swiftmodule",
+      "objects" : [
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/main.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j18",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "OriginCheck_main",
+        "-swift-version",
+        "5",
+        "-I",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-L",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-plugin-path",
+        "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "native"
+      ],
+      "outputFileMapPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/main.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules/OriginCheck.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/OriginCheck/main.swift"
+      ],
+      "tempsPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.hb-broker-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "fileList" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build/sources",
+      "importPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/hb-broker/main.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules/HBBrokerCore.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "hb_broker",
+      "moduleOutputPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules/hb_broker.swiftmodule",
+      "objects" : [
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build/main.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j18",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "hb_broker_main",
+        "-swift-version",
+        "5",
+        "-I",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-L",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-plugin-path",
+        "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "native"
+      ],
+      "outputFileMapPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build/main.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules/hb_broker.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/hb-broker/main.swift"
+      ],
+      "tempsPath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "HBBrokerCore" : [
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "-module-name",
+      "HBBrokerCore",
+      "-package-name",
+      "native",
+      "-c",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/KeychainBlob.swift",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/Origin.swift",
+      "-I",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j18",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/include/HBBrokerCore-Swift.h",
+      "-swift-version",
+      "5",
+      "-I",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-L",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-plugin-path",
+      "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "native",
+      "-driver-use-frontend-path",
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+    ],
+    "OriginCheck" : [
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "-module-name",
+      "OriginCheck",
+      "-package-name",
+      "native",
+      "-c",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/OriginCheck/main.swift",
+      "-I",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j18",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "OriginCheck_main",
+      "-swift-version",
+      "5",
+      "-I",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-L",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-plugin-path",
+      "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "native",
+      "-driver-use-frontend-path",
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+    ],
+    "hb_broker" : [
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "-module-name",
+      "hb_broker",
+      "-package-name",
+      "native",
+      "-c",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/hb-broker/main.swift",
+      "-I",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j18",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "hb_broker_main",
+      "-swift-version",
+      "5",
+      "-I",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-L",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-plugin-path",
+      "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "native",
+      "-driver-use-frontend-path",
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "HBBrokerCore" : [
+
+    ],
+    "OriginCheck" : [
+      "HBBrokerCore"
+    ],
+    "hb_broker" : [
+      "HBBrokerCore"
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/KeychainBlob.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/HBBrokerCore/Origin.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/sources"
+    },
+    "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck-entitlement.plist"
+    },
+    "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/OriginCheck/main.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/sources"
+    },
+    "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.build/main.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/OriginCheck.product/Objects.LinkFileList"
+    },
+    "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb-broker-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb-broker-entitlement.plist"
+    },
+    "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb-broker.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/KeychainBlob.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/HBBrokerCore.build/Origin.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build/main.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb-broker.product/Objects.LinkFileList"
+    },
+    "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/Sources/hb-broker/main.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/hb_broker.build/sources"
+    },
+    "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/pa1nd/pro/003-atelier-modules/horse-browser/native/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+    }
+  }
+}

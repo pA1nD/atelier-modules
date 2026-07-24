@@ -1,0 +1,4 @@
+# Swift build output. `npm test` (cd native && swift run OriginCheck) writes
+# native/.build; the daemon build.sh already builds out-of-tree. Never ship it.
+.build/
+native/.build/

@@ -1,9 +1,20 @@
 {
   "name": "horse-browser",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "license": "MIT",
-  "description": "The night console — give your agents a browser of their own: browser-harness + the dedicated Horse Browser, with a live process wall.",
+  "description": "The control board for the Horse Browser — the dedicated browser your agents drive (vendored harness included): setup/status tiles, the enforced Bitwarden credential broker, a real compositing probe + DeskPad lid-closed vision, the live process wall, and the docs agents load. A compact hero links to the full story.",
+  "scripts": {
+    "test": "cd native && swift run OriginCheck"
+  },
   "atelier": {
-    "note": "Nothing required up front — the page reads the machine and degrades gracefully. Its buttons install the stack: browser-harness via uv (PyPI) and @pa1nd/horse-browser via npm."
+    "os": [
+      "darwin"
+    ],
+    "bins": {
+      "bw": "brew install bitwarden-cli",
+      "swift": "xcode-select --install",
+      "python3": "xcode-select --install"
+    },
+    "note": "Nothing required up front — the board reads the machine and degrades gracefully; it doubles as a first-run setup guide. Its buttons install the stack: @pa1nd/horse-browser via npm (postinstall builds the vendored harness venv) and DeskPad via brew for lid-closed vision. The Bitwarden credential broker (native Swift daemon in native/, signed + launchd) needs the Bitwarden CLI (bw) + Swift/Xcode Command Line Tools; it compiles on first run into ~/Library/Application Support/hb-broker (outside the module tree). The display census (CoreGraphics via python3 ctypes, ioreg), DeskPad, and the broker are macOS-only; those probes report nulls elsewhere and the compositing check still works against any CDP on 127.0.0.1:9223 (override with HB_CDP_PORT)."
   }
 }

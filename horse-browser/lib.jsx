@@ -172,11 +172,43 @@ const ICON_PATHS = {
   ],
   star: [['path', { d: 'M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z' }]],
   check: [['path', { d: 'M20 6 9 17l-5-5' }]],
+  x: [['path', { d: 'M18 6 6 18' }], ['path', { d: 'm6 6 12 12' }]],
+  monitor: [
+    ['rect', { width: 20, height: 14, x: 2, y: 3, rx: 2 }],
+    ['path', { d: 'M8 21h8' }],
+    ['path', { d: 'M12 17v4' }],
+  ],
+  'shield-check': [
+    ['path', { d: 'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.81 17 5 19 5a1 1 0 0 1 1 1z' }],
+    ['path', { d: 'm9 12 2 2 4-4' }],
+  ],
+  'file-text': [
+    ['path', { d: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z' }],
+    ['path', { d: 'M14 2v4a2 2 0 0 0 2 2h4' }],
+    ['path', { d: 'M10 9H8' }],
+    ['path', { d: 'M16 13H8' }],
+    ['path', { d: 'M16 17H8' }],
+  ],
   'book-open': [
     ['path', { d: 'M12 7v14' }],
     ['path', { d: 'M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z' }],
   ],
   square: [['rect', { width: 18, height: 18, x: 3, y: 3, rx: 2 }]],
+  activity: [['path', { d: 'M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2' }]],
+  'key-round': [
+    ['path', { d: 'M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z' }],
+    ['circle', { cx: 16.5, cy: 7.5, r: 0.5, fill: 'currentColor' }],
+  ],
+  lock: [
+    ['rect', { width: 18, height: 11, x: 3, y: 11, rx: 2, ry: 2 }],
+    ['path', { d: 'M7 11V7a5 5 0 0 1 10 0v4' }],
+  ],
+  'refresh-cw': [
+    ['path', { d: 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8' }],
+    ['path', { d: 'M21 3v5h-5' }],
+    ['path', { d: 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16' }],
+    ['path', { d: 'M8 16H3v5' }],
+  ],
 }
 export function Icon({ name, size = 16, strokeWidth = 1.85, className = '', style }) {
   const nodes = ICON_PATHS[name] || ICON_PATHS.square
@@ -275,6 +307,29 @@ export function VersionTag({ v, run, dark }) {
         <span className={cn('text-[10.5px]', dark ? 'text-zinc-500' : 'text-zinc-400 dark:text-zinc-500')}>up to date</span>
       ) : null}
     </span>
+  )
+}
+
+// A focused reading overlay (copied from the claude-md module, dark-hardcoded —
+// the night console owns its palette regardless of the chrome's theme).
+export function Modal({ onClose, size = 'max-w-2xl', closeOnEsc = true, children }) {
+  const [shown, setShown] = useState(false)
+  const closing = useRef(false)
+  const close = () => { if (closing.current) return; closing.current = true; setShown(false); setTimeout(onClose, 180) }
+  useEffect(() => {
+    const r = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)))
+    const prev = document.body.style.overflow; document.body.style.overflow = 'hidden'
+    const onKey = (e) => { if (e.key === 'Escape' && closeOnEsc) close() }
+    document.addEventListener('keydown', onKey)
+    return () => { cancelAnimationFrame(r); document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
+  }, [])
+  return (
+    <div className="cl-root fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto px-3 py-6 sm:items-center sm:px-6 sm:py-12">
+      <div onClick={close} className={cn('fixed inset-0 bg-zinc-950/60 backdrop-blur-lg backdrop-saturate-150 transition-opacity duration-200 ease-out', shown ? 'opacity-100' : 'opacity-0')} />
+      <div className={cn('relative z-10 flex max-h-[86vh] w-full flex-col overflow-hidden rounded-2xl bg-zinc-900 shadow-2xl ring-1 ring-white/10 transition duration-200 ease-out will-change-transform', size, shown ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-4 scale-[0.97] opacity-0')}>
+        {typeof children === 'function' ? children(close) : children}
+      </div>
+    </div>
   )
 }
 
