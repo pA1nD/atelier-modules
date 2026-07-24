@@ -1,9 +1,9 @@
 {
   "name": "claude-md",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "license": "MIT",
-  "description": "CLAUDE.md — the note Claude reads first: the four Karpathy rules, your real ~/.claude/CLAUDE.md read live, and a one-click append-with-backup install.",
+  "description": "CLAUDE.md — the note Claude reads first: the four Karpathy rules, your real ~/.claude/CLAUDE.md and ~/.claude/rules/*.md read live as the load order, and a one-click install that gives the rules their own rule file.",
   "atelier": {
-    "note": "Reads ~/.claude/CLAUDE.md and, only with explicit confirmation, appends to it — the file is backed up first, never clobbered."
+    "note": "Reads ~/.claude/CLAUDE.md and ~/.claude/rules/*.md live. The install action, only with explicit confirmation, writes the four rules to ~/.claude/rules/instructions.md; if a CLAUDE.md chapter already carries them, that chapter is moved over verbatim and CLAUDE.md is rewritten without it. Both files are backed up first."
   }
 }

@@ -1,11 +1,15 @@
 /* claude-md — backend (extracted from claude5iq's backend.js).
  *
- * Instruments read ~/.claude/CLAUDE.md live: its top-level chapters (with
- * "ours" detection — the section carrying all four Karpathy rules), size, and
- * whether the Horse Browser playbook @-import is current. Hands:
- * install-global-claudemd — APPENDS the four-rule block (never clobbers; the
- * file is backed up first), and install-browser-config — re-applies the
- * horse-browser claude-md.sh import. Every action streams over the shell WS.
+ * Instruments read ~/.claude/CLAUDE.md AND ~/.claude/rules/*.md live: the
+ * file's top-level chapters, every rule file (with owner markers and
+ * @-imports), and "ours" detection — wherever the four Karpathy rules live.
+ * Rules files load into every session exactly like CLAUDE.md, so the fleet
+ * convention is one owned rule file per concern. One hand:
+ * install-global-claudemd — writes the four rules to
+ * ~/.claude/rules/instructions.md (migrating an existing CLAUDE.md chapter
+ * over verbatim, backups first). Deliberately dumb beyond that: no probing of
+ * other tools, no version checks — just parse the folder + headlines. Action
+ * progress streams over the shell WS.
  *
  * Pure Node builtins, no deps.
  */
@@ -13,12 +17,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn, execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 
-const execFileP = promisify(execFile)
 const HOME = os.homedir()
 const GLOBAL_CLAUDE_MD = path.join(HOME, '.claude', 'CLAUDE.md')
+const RULES_DIR = path.join(HOME, '.claude', 'rules')
+const OUR_RULE_FILE = path.join(RULES_DIR, 'instructions.md')
 
 /* ── reading the file ─────────────────────────────────────────────────────── */
 const CHAPTER_TITLES = ['Think Before Coding', 'Simplicity First', 'Surgical Changes', 'Goal-Driven Execution']
@@ -32,6 +35,17 @@ function topSections(txt) {
   }
   return out
 }
+// split into raw chunks KEEPING heading lines, so a chapter can be cut out verbatim.
+// chunk 0 is the preamble (title null); every other chunk starts with its '# ' line.
+function splitTop(txt) {
+  const chunks = [{ title: null, lines: [] }]
+  for (const line of (txt || '').split('\n')) {
+    const m = /^#\s+(.+?)\s*$/.exec(line)
+    if (m) chunks.push({ title: m[1], lines: [line] })
+    else chunks[chunks.length - 1].lines.push(line)
+  }
+  return chunks
+}
 function claudeMdInfo(file) {
   try {
     const txt = fs.readFileSync(file, 'utf8')
@@ -43,51 +57,35 @@ function claudeMdInfo(file) {
   } catch { return { exists: false, path: file.replace(HOME, '~'), bytes: 0, lines: 0, chapters: [], hasFourChapters: false, sections: [], hasOurs: false } }
 }
 
-/* ── the Horse Browser playbooks import (shares this file) ─────────────────
- * horse-browser ships claude-md.sh in its package root; resolve it from the
- * launcher on PATH (through the npm bin symlink or a dev-repo symlink). */
-function findOnPath(name) {
-  const dirs = [
-    ...(process.env.PATH || '').split(':'),
-    path.join(HOME, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin',
-  ]
-  for (const d of dirs) {
-    if (!d) continue
-    const p = path.join(d, name)
-    try { fs.accessSync(p, fs.constants.X_OK); return p } catch {}
-  }
-  return null
-}
-function hbClaudeMdScript() {
+/* ── the rules folder — ~/.claude/rules/*.md, loaded by Claude Code exactly
+ * like CLAUDE.md (same injection, @-imports expand the same way). One file per
+ * concern; tools own theirs whole via a first-line HTML-comment marker. */
+function ruleInfo(p) {
   try {
-    const bin = findOnPath('horse-browser'); if (!bin) return null
-    const p = path.join(path.dirname(path.dirname(fs.realpathSync(bin))), 'claude-md.sh')
-    return fs.existsSync(p) ? p : null
+    const txt = fs.readFileSync(p, 'utf8')
+    const managed = /^<!--\s*(.+?)\s*-->/.exec(txt.split('\n', 1)[0] || '')
+    const h1 = /^#\s+(.+?)\s*$/m.exec(txt)
+    return {
+      file: path.basename(p), path: p.replace(HOME, '~'),
+      title: h1 ? h1[1] : path.basename(p),
+      bytes: Buffer.byteLength(txt), lines: txt.split('\n').length,
+      ours: CHAPTER_TITLES.every((t) => txt.includes(t)),
+      managedBy: managed ? managed[1] : null,
+      imports: [...txt.matchAll(/^@(\S+)\s*$/gm)].map((m) => m[1]),
+    }
   } catch { return null }
 }
-async function browserConfigInfo() {
-  const script = hbClaudeMdScript()
-  if (!script) return { scriptAvailable: false, upToDate: null }
-  // `claude-md.sh check` exits 0 when the import block + symlink are current, non-zero when drifted.
-  try { await execFileP('bash', [script, 'check'], { timeout: 5000 }); return { scriptAvailable: true, upToDate: true } }
-  catch { return { scriptAvailable: true, upToDate: false } }
-}
-// non-blocking cache: the frequent snapshot poll must never wait on a subprocess.
-let _cfgVal = null, _cfgAt = 0, _cfgBusy = false
-function cfgBust() { _cfgAt = 0 }
-async function cachedConfigInfo() {
-  if ((!_cfgVal || Date.now() - _cfgAt > 90000) && !_cfgBusy) {
-    _cfgBusy = true
-    Promise.resolve().then(browserConfigInfo).then((v) => { _cfgVal = v; _cfgAt = Date.now() }).catch(() => {}).finally(() => { _cfgBusy = false })
-  }
-  return _cfgVal
+function rulesInfo() {
+  let names = []
+  try { names = fs.readdirSync(RULES_DIR).filter((f) => f.endsWith('.md')).sort() } catch {}
+  return names.map((f) => ruleInfo(path.join(RULES_DIR, f))).filter(Boolean)
 }
 
-async function snapshot() {
+function snapshot() {
   return {
     now: Date.now(),
     claudemd: { global: claudeMdInfo(GLOBAL_CLAUDE_MD) },
-    versions: { 'browser-config': await cachedConfigInfo() },
+    rules: rulesInfo(),
   }
 }
 
@@ -148,8 +146,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 /* ──────────────────────────── actions ────────────────────────────────────── */
 // A registry the frontend mirrors. `danger`: safe | network | destructive.
 const ACTIONS = {
-  'install-global-claudemd': { danger: 'destructive', label: 'Add the four rules to CLAUDE.md' },
-  'install-browser-config':  { danger: 'destructive', label: 'Import the browser playbooks' },
+  'install-global-claudemd': { danger: 'destructive', label: 'Install the four rules as a rule file' },
 }
 
 function nowStamp() { return new Date().toISOString().replace('T', ' ').slice(0, 19) }
@@ -157,30 +154,9 @@ function nowStamp() { return new Date().toISOString().replace('T', ' ').slice(0,
 export default {
   async mountRoutes(router, ctx) {
     const slot = ctx.module(ctx.id)
-    slot.children ??= new Set()
 
     const emit = (actionId, line, stream = 'stdout') => ctx.broadcast({ type: 'action-log', actionId, stream, line })
     const done = (actionId, payload) => ctx.broadcast({ type: 'action-done', actionId, ...payload })
-
-    // Spawn a command, stream every line over the WS, track for teardown.
-    const runStreaming = (actionId, cmd, args, opts = {}) => new Promise((resolve) => {
-      emit(actionId, `$ ${cmd} ${args.join(' ')}`.trim(), 'cmd')
-      let child
-      try { child = spawn(cmd, args, { detached: true, env: { ...process.env, ...opts.env }, cwd: opts.cwd }) }
-      catch (e) { emit(actionId, `failed to spawn: ${e.message}`, 'stderr'); return resolve({ ok: false, error: e.message }) }
-      slot.children.add(child)
-      const onData = (s) => (b) => String(b).split('\n').forEach((l) => l.length && emit(actionId, l, s))
-      child.stdout?.on('data', onData('stdout'))
-      child.stderr?.on('data', onData('stderr'))
-      child.on('error', (e) => { emit(actionId, e.message, 'stderr') })
-      child.on('close', (code) => {
-        slot.children.delete(child)
-        const ok = code === 0
-        emit(actionId, ok ? `✓ done (exit ${code})` : `✗ exit ${code}`, ok ? 'ok' : 'stderr')
-        done(actionId, { ok, code, pid: child.pid })
-        resolve({ ok, code, pid: child.pid })
-      })
-    })
 
     const backup = (file) => {
       if (!fs.existsSync(file)) return null
@@ -191,7 +167,7 @@ export default {
 
     /* ── instruments ── */
     const markWatched = () => { slot.watchedAt = Date.now() }
-    router.get('/snapshot', async (req, res) => { markWatched(); res.json(await snapshot()) })
+    router.get('/snapshot', (req, res) => { markWatched(); res.json(snapshot()) })
 
     /* ── the live push — the shell WS is the realtime channel, so the poll lives
      *    HERE, server-side, once for all viewers: recompute every few seconds,
@@ -203,7 +179,7 @@ export default {
       if (slot.watchBusy) return
       slot.watchBusy = true
       try {
-        const s = await snapshot()
+        const s = snapshot()
         const k = snapKey(s)
         if (force || k !== slot.lastSnapKey) { slot.lastSnapKey = k; ctx.broadcast({ type: 'snapshot', snapshot: s }) }
       } catch {}
@@ -216,6 +192,24 @@ export default {
 
     router.get('/templates/global', (req, res) => res.json({ which: 'global', text: GLOBAL_TEMPLATE }))
 
+    /* ── document readers — the frontend's click-to-read pane ── */
+    router.get('/chapter/:i', (req, res) => {
+      let txt = ''
+      try { txt = fs.readFileSync(GLOBAL_CLAUDE_MD, 'utf8') } catch {}
+      const s = topSections(txt)[Number(req.params.i)]
+      if (!s) return res.json({ error: 'no such chapter' }, 404)
+      res.json({ title: s.title, path: GLOBAL_CLAUDE_MD.replace(HOME, '~'), text: (`# ${s.title}\n` + s.body).replace(/\s+$/, ''), raw: txt })
+    })
+    router.get('/rule/:file', (req, res) => {
+      const file = path.basename(req.params.file)   // no traversal — rules dir only
+      if (!file.endsWith('.md')) return res.json({ error: 'bad file' }, 400)
+      try {
+        const p = path.join(RULES_DIR, file)
+        const txt = fs.readFileSync(p, 'utf8')
+        res.json({ file, path: p.replace(HOME, '~'), text: txt, raw: txt })
+      } catch { return res.json({ error: 'not found' }, 404) }
+    })
+
     /* ── hands ── */
     router.post('/action/:id', async (req, res) => {
       const id = req.params.id
@@ -224,35 +218,38 @@ export default {
       const body = await req.json().catch(() => ({}))
       const confirmed = body && body.confirm === true
 
-      // Destructive actions (these write ~/.claude/CLAUDE.md) must be explicitly confirmed.
+      // Destructive actions (these write files under ~/.claude/) must be explicitly confirmed.
       if (def.danger === 'destructive' && !confirmed) {
         return res.json({ needsConfirm: true, danger: def.danger, exists: fs.existsSync(GLOBAL_CLAUDE_MD), info: claudeMdInfo(GLOBAL_CLAUDE_MD) })
       }
 
       switch (id) {
         case 'install-global-claudemd': {
-          // Append the Karpathy block (the whole chapter) — never clobber the rest of the file.
-          const info = claudeMdInfo(GLOBAL_CLAUDE_MD)
-          if (info.hasOurs) { emit(id, 'these four rules are already in your CLAUDE.md — nothing to do', 'ok'); done(id, { ok: true }); tickNow(); return res.json({ ok: true }) }
-          fs.mkdirSync(path.dirname(GLOBAL_CLAUDE_MD), { recursive: true })
-          let existing = ''
-          try { existing = fs.readFileSync(GLOBAL_CLAUDE_MD, 'utf8') } catch {}
-          if (existing.trim()) { const b = backup(GLOBAL_CLAUDE_MD); if (b) emit(id, `backed up existing CLAUDE.md → ${path.basename(b)}`, 'stdout') }
-          const next = existing.trim() ? existing.replace(/\n*$/, '') + '\n\n' + GLOBAL_TEMPLATE.trim() + '\n' : GLOBAL_TEMPLATE.trim() + '\n'
-          fs.writeFileSync(GLOBAL_CLAUDE_MD, next)
-          emit(id, `✓ added the four rules to ${GLOBAL_CLAUDE_MD.replace(HOME, '~')} @ ${nowStamp()}`, 'ok')
+          // The four rules live in their OWN rule file (~/.claude/rules/instructions.md) —
+          // loaded exactly like CLAUDE.md. If a CLAUDE.md chapter already carries them,
+          // it's MOVED over verbatim (the user's customized text wins over the template).
+          const already = rulesInfo().find((r) => r.ours)
+          if (already) { emit(id, `these four rules are already in ${already.path} — nothing to do`, 'ok'); done(id, { ok: true }); tickNow(); return res.json({ ok: true }) }
+          fs.mkdirSync(RULES_DIR, { recursive: true })
+          let body = GLOBAL_TEMPLATE.trim() + '\n'
+          let txt = ''
+          try { txt = fs.readFileSync(GLOBAL_CLAUDE_MD, 'utf8') } catch {}
+          const chunks = splitTop(txt)
+          const oursChunk = chunks.find((c) => c.title && CHAPTER_TITLES.every((t) => c.lines.join('\n').includes(t)))
+          if (oursChunk) {
+            const b = backup(GLOBAL_CLAUDE_MD); if (b) emit(id, `backed up CLAUDE.md → ${path.basename(b)}`, 'stdout')
+            body = oursChunk.lines.join('\n').replace(/\s+$/, '') + '\n'
+            const rest = chunks.filter((c) => c !== oursChunk).map((c) => c.lines.join('\n')).join('\n')
+              .replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\s+$/, '')
+            fs.writeFileSync(GLOBAL_CLAUDE_MD, rest ? rest + '\n' : '')
+            emit(id, `moved your "# ${oursChunk.title}" chapter out of CLAUDE.md, verbatim`, 'stdout')
+          }
+          if (fs.existsSync(OUR_RULE_FILE)) { const b2 = backup(OUR_RULE_FILE); if (b2) emit(id, `backed up existing ${path.basename(OUR_RULE_FILE)} → ${path.basename(b2)}`, 'stdout') }
+          fs.writeFileSync(OUR_RULE_FILE, body)
+          emit(id, `✓ the four rules now live in ${OUR_RULE_FILE.replace(HOME, '~')} @ ${nowStamp()}`, 'ok')
           done(id, { ok: true })
           tickNow()
           return res.json({ ok: true })
-        }
-        case 'install-browser-config': {
-          // claude-md.sh writes the browser-playbook @-import into ~/.claude/CLAUDE.md
-          // (idempotent, backs up, re-points the version-agnostic symlink). `apply` = (re)install.
-          const script = hbClaudeMdScript()
-          if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first (the Horse Browser module)', 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
-          const r = await runStreaming(id, 'bash', [script, 'apply'])
-          cfgBust(); tickNow()
-          return res.json(r)
         }
         default:
           return res.json({ error: 'unhandled' }, 500)
@@ -261,14 +258,8 @@ export default {
 
     ctx.log('claude-md · mounted')
 
-    // Teardown: kill any in-flight children on hot-reload + exit.
     return () => {
       if (slot.watchTimer) { clearInterval(slot.watchTimer); slot.watchTimer = null }
-      for (const c of slot.children) {
-        try { process.kill(-c.pid, 'SIGTERM') } catch {}
-        try { c.kill('SIGTERM') } catch {}
-      }
-      slot.children.clear()
     }
   },
 }
