@@ -1,5 +1,6 @@
 /*
  * horse-browser/credentials.js — the credential subsystem (Bitwarden broker).
+ * Vault stays warm until an explicit lock/disconnect (no idle timeout); the board warms it on open.
  *
  * Folded in from the retired hb-auth module (2026-07-24). The ENFORCED
  * Bitwarden broker: a signed local daemon (./broker.js + ./native/) holds the
@@ -13,7 +14,7 @@
  * granted-items index (names/usernames/hosts only).
  *
  * `mountCredentials(router, ctx)` registers all `/broker/*`, `/helpers/*`,
- * `/hints*`, `/selfheal`, `/state`, `/skill.md` routes and returns a teardown.
+ * `/hints*`, `/state`, `/skill.md` routes and returns a teardown.
  * The daemon lives in ~/Library/Application Support/hb-broker (OUTSIDE the
  * module tree) so hot-reload and agent edits can't touch the running boundary.
  */
@@ -50,7 +51,7 @@ const shortHome = (p) => (p && p.startsWith(os.homedir()) ? '~' + p.slice(os.hom
 // (roadmap | available | configured).
 const METHODS = [
   { id: 'bitwarden', kind: 'password', name: 'Bitwarden (broker)', impl: true, enforced: true,
-    helpers: ['hb_creds', 'hb_type_secret', 'hb_type_totp', 'hb_get_totp', 'hb_get_secret'],
+    helpers: ['creds', 'type_secret', 'type_totp', 'get_totp', 'get_secret'],
     requires: 'bw installed + logged in, and the broker set up (macOS approval) — see the Credentials page',
     desc: 'ENFORCED path: a signed local daemon holds the only vault session and gates every credential by the Bitwarden COLLECTION it lives in (auto | ask-approval | never) + an origin check read from the browser. Access is managed by moving items between collections; the password is typed over the broker\'s OWN CDP session, so it never enters agent code — a boundary, not a convention.' },
   { id: 'email-code', kind: 'email', name: 'Email code', impl: false,
@@ -62,15 +63,15 @@ const METHODS = [
 // --- the agent helpers we document + detect ----------------------------------
 // A registry so the UI renders every entry; `marker` is how we detect it on disk.
 const HELPERS = [
-  { name: 'hb_creds', signature: 'hb_creds()', marker: 'def hb_creds',
+  { name: 'creds', signature: 'creds()', marker: 'def creds',
     summary: 'The agent\'s allow-list: non-secret metadata of every login in a granted Bitwarden collection — [{item, username, hosts, tier, hasTotp}].' },
-  { name: 'hb_type_secret', signature: 'hb_type_secret(cred, target)', marker: 'def hb_type_secret',
+  { name: 'type_secret', signature: 'type_secret(cred, target)', marker: 'def type_secret',
     summary: 'ENFORCED: the broker types cred\'s Bitwarden password at the focused field of tab `target` — origin-checked, policy-gated, never returned to you.' },
-  { name: 'hb_type_totp', signature: 'hb_type_totp(cred, target)', marker: 'def hb_type_totp',
+  { name: 'type_totp', signature: 'type_totp(cred, target)', marker: 'def type_totp',
     summary: 'ENFORCED: the broker types cred\'s current TOTP at the focused field (auto-advances 6-box widgets).' },
-  { name: 'hb_get_totp', signature: 'hb_get_totp(cred)', marker: 'def hb_get_totp',
+  { name: 'get_totp', signature: 'get_totp(cred)', marker: 'def get_totp',
     summary: 'ENFORCED: the current 6-digit TOTP for cred as a value (self-expiring; safe fallback for odd widgets).' },
-  { name: 'hb_get_secret', signature: 'hb_get_secret(cred)', marker: 'def hb_get_secret',
+  { name: 'get_secret', signature: 'get_secret(cred)', marker: 'def get_secret',
     summary: 'ENFORCED: cred\'s password as a value — a macOS approval every time; for non-web use (CLI/env) only. Avoid printing it.' },
 ]
 
@@ -78,9 +79,10 @@ const HELPERS = [
 // already-installed chain is adopted, not re-flagged as outdated. Secrets never
 // enter the LLM context: the broker types passwords over its own CDP session.
 function buildHelperCode() {
-  return `# --- hb-auth agent helpers (Bitwarden broker) -----------------------------------
-# Managed by the atelier hb-auth module — overwritten on every install/update from
-# its Methods page. Put your own tweaks in agent_helpers.py (under different names).
+  return `# --- hb-auth agent helpers (Bitwarden broker) — a horse-browser plugin -----------
+# Managed by the atelier horse-browser module: a plugin in <workspace>/plugins/, auto-loaded by
+# the harness and overwritten on every install/update. Put your own tweaks in agent_helpers.py,
+# which loads LAST and wins; the broker's security is enforced in the daemon regardless.
 # Secrets never enter the LLM context: the broker daemon types passwords over its
 # own CDP session; TOTP codes are self-expiring.
 import json as _json
@@ -121,53 +123,52 @@ def _bk(req, timeout=120):
         raise RuntimeError("hb-broker %s denied: %s (%s)" % (req.get("op"), r.get("error"), r.get("reason")))
     return r
 
-def hb_type_secret(cred, target):
+def type_secret(cred, target):
     """Broker types cred's Bitwarden password at the focused field of tab \`target\`. Origin-checked, policy-gated."""
     r = _bk({"op": "type_secret", "cred": cred, "target": target})
     return "typed %d chars for %s" % (r["typed"], cred)
 
-def hb_type_totp(cred, target):
+def type_totp(cred, target):
     """Broker types cred's current TOTP at the focused field of \`target\` (auto-advances 6-box widgets)."""
     r = _bk({"op": "type_totp", "cred": cred, "target": target})
     return "typed %d-digit code" % r["typed"]
 
-def hb_get_totp(cred):
+def get_totp(cred):
     """The current 6-digit TOTP for cred (self-expiring; safe fallback for odd widgets)."""
     return _bk({"op": "get_totp", "cred": cred})["value"]
 
-def hb_get_secret(cred):
+def get_secret(cred):
     """cred's password as a value — a macOS approval every time; for non-web use (CLI/env). Do not print it."""
     return _bk({"op": "get_secret", "cred": cred})["value"]
 
-def hb_creds():
+def creds():
     """The credentials you may use: [{item,username,hosts,tier,hasTotp}] — only items in a
     Bitwarden collection the operator granted agents, never the whole vault. Pass 'item' above."""
     return _bk({"op": "list"})["items"]
+
+# deprecated aliases: renamed broker verbs kept as warn-once shims so an already-running agent
+# session (which learned the old hb_* names) gets the new verb + a notice, not a NameError.
+def _renamed(old, new):
+    import sys as _s
+    _t = globals()[new]
+    def _sh(*a, **k):
+        _s.stderr.write("horse-browser: %s() was renamed to %s() — update your script.\\n" % (old, new))
+        return _t(*a, **k)
+    _sh._renamed_to = new
+    return _sh
+for _o, _n in {"hb_creds": "creds", "hb_type_secret": "type_secret", "hb_type_totp": "type_totp", "hb_get_secret": "get_secret", "hb_get_totp": "get_totp"}.items():
+    globals()[_o] = _renamed(_o, _n)
 `
 }
 
-// The managed helper file + its load-once stub. Kept BYTE-IDENTICAL to hb-auth's
-// so an already-installed stub is adopted, not orphaned. The pre-2026-07-24
-// `atelier-login` (LastPass-era) stub block is stripped on install/self-heal so a
-// migrated chain never double-loads the file.
-const LOGIN_HELPERS_FILE = 'atelier_login_helpers.py'
-const LOGIN_STUB_BEGIN = '# >>> hb-auth: agent helpers (managed loader — do not edit) >>>'
-const LOGIN_STUB = `${LOGIN_STUB_BEGIN}
-# The hb-auth agent helpers (Bitwarden broker) live in ${LOGIN_HELPERS_FILE}
-# next to this file. The atelier hb-auth module owns THAT file and overwrites it on
-# update — your own code here is never touched. Install/update from the module's
-# Methods page.
-try:
-    import os as _al_os
-    _al_path = _al_os.path.join(_al_os.path.dirname(_al_os.path.abspath(__file__)), "${LOGIN_HELPERS_FILE}")
-    exec(compile(open(_al_path).read(), _al_path, "exec"))
-except Exception as _al_err:
-    import sys as _al_sys
-    print("hb-auth: couldn't load ${LOGIN_HELPERS_FILE} (%r) — reinstall from the hb-auth module" % (_al_err,), file=_al_sys.stderr)
-# <<< hb-auth <<<
-`
-// The retired LastPass-era stub block — recognized and removed on install.
+// The broker helpers ship as a horse-browser PLUGIN: <workspace>/plugins/atelier_login.py, which
+// the harness auto-loads (precedence: core < plugins < the agent's own agent_helpers.py — last wins).
+// No stub is appended to agent_helpers.py anymore; on install we migrate any user off the old models.
+const PLUGIN_FILE = 'atelier_login.py'                  // the plugin's filename, under plugins/
+const LEGACY_HELPERS_FILE = 'atelier_login_helpers.py'  // the pre-plugin sibling file — removed on migration
+// Old stub blocks once appended to agent_helpers.py (LastPass-era + hb-auth) — stripped on install.
 const LEGACY_STUB_RE = /\n*# >>> atelier-login:[^\n]*\n[\s\S]*?# <<< atelier-login <<<\n?/g
+const HB_STUB_RE = /\n*# >>> hb-auth:[^\n]*\n[\s\S]*?# <<< hb-auth <<<\n?/g
 
 // horse-browser's harness auto-loads <workspace>/agent_helpers.py on every call.
 function helperFile() {
@@ -179,86 +180,75 @@ function helperFile() {
   return cands[0] || null
 }
 
+function workspaceDir() { const f = helperFile(); return f ? path.dirname(f) : null }
+function pluginFile() { const ws = workspaceDir(); return ws ? path.join(ws, 'plugins', PLUGIN_FILE) : null }
+
 function helperState(code) {
-  const file = helperFile()
-  let contents = ''
-  let fileExists = false
-  try { if (file && fs.existsSync(file)) { fileExists = true; contents = fs.readFileSync(file, 'utf8') } } catch {}
-  const modPath = file ? path.join(path.dirname(file), LOGIN_HELPERS_FILE) : null
+  const agentFile = helperFile()
+  const ws = workspaceDir()
+  const modPath = pluginFile()
   let modSrc = null
   try { modSrc = modPath && fs.existsSync(modPath) ? fs.readFileSync(modPath, 'utf8') : null } catch {}
-  const stubWired = contents.includes(LOGIN_STUB_BEGIN)
+  let fileExists = false
+  try { fileExists = !!(agentFile && fs.existsSync(agentFile)) } catch {}
+  let harnessReady = false
+  try { harnessReady = !!(ws && fs.existsSync(ws)) } catch {}
   return {
-    file: file ? shortHome(file) : null,
+    file: agentFile ? shortHome(agentFile) : null,
     fileExists,
+    harnessReady,   // the harness workspace exists → we can install the plugin (was proxied by fileExists)
     code,
     moduleFile: {
       path: modPath ? shortHome(modPath) : null,
       exists: !!modSrc,
       current: modSrc === code,
     },
-    stubWired,
-    // an older hand-pasted copy inline in agent_helpers.py — loads first, so the
-    // module file wins once installed; flagged so the operator can prune it
-    inlineLegacy: HELPERS.some((h) => contents.includes(h.marker)),
     helpers: HELPERS.map((h) => ({
       name: h.name, signature: h.signature, summary: h.summary,
-      installed: (stubWired && !!modSrc && modSrc.includes(h.marker)) || contents.includes(h.marker),
+      installed: !!modSrc && modSrc.includes(h.marker),
     })),
   }
 }
 
 // --- self-heal ---------------------------------------------------------------
-// Keeps the login load-chain wired without a manual click. Persisted so the
-// operator can switch it off (default ON — robustness is the whole point).
-function selfHealCfg(ctx) { return path.join(ctx.dataDir, 'cred-selfheal.json') }
-function selfHealEnabled(ctx) {
-  try {
-    const v = JSON.parse(fs.readFileSync(selfHealCfg(ctx), 'utf8')).enabled
-    if (typeof v === 'boolean') return v
-  } catch {}
-  return true
-}
-function setSelfHeal(ctx, on) {
-  fs.mkdirSync(ctx.dataDir, { recursive: true })
-  fs.writeFileSync(selfHealCfg(ctx), JSON.stringify({ enabled: !!on }, null, 2))
-}
+// Always on, no toggle: the broker plugin re-writes itself whenever it drifts — robustness is
+// the whole point, so it isn't optional.
 
-// (Re)write the module-owned login file and wire the load-once stub into
-// agent_helpers.py exactly once. Idempotent — writes only what's missing/changed.
+// (Re)write the plugin at <workspace>/plugins/atelier_login.py and migrate any user off the old
+// stub model. Idempotent — writes only what's missing/changed; never touches the operator's code.
 function installLoginHelpers(code) {
-  const file = helperFile()
-  if (!file) return { ok: false, error: 'horse-browser harness workspace not found' }
+  const ws = workspaceDir()
+  if (!ws) return { ok: false, error: 'horse-browser harness workspace not found' }
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    const modPath = path.join(path.dirname(file), LOGIN_HELPERS_FILE)
+    const pdir = path.join(ws, 'plugins')
+    fs.mkdirSync(pdir, { recursive: true })
+    const modPath = path.join(pdir, PLUGIN_FILE)
     let modSrc = null
     try { modSrc = fs.readFileSync(modPath, 'utf8') } catch {}
     let wroteFile = false
     if (modSrc !== code) { fs.writeFileSync(modPath, code); wroteFile = true }
+    // migrate: strip any stub we ever appended to agent_helpers.py (leaving the operator's own
+    // code), and remove the old sibling helpers file the plugin supersedes.
+    const agentFile = path.join(ws, 'agent_helpers.py')
     let contents = ''
-    try { contents = fs.readFileSync(file, 'utf8') } catch {}
-    // migrate: strip the LastPass-era stub block so the file never double-loads
-    const stripped = contents.replace(LEGACY_STUB_RE, '\n')
-    let wiredStub = false
-    if (!stripped.includes(LOGIN_STUB_BEGIN)) {
-      fs.writeFileSync(file, (stripped.trim() ? stripped.replace(/\n*$/, '\n\n') : '') + LOGIN_STUB)
-      wiredStub = true
-    } else if (stripped !== contents) {
-      fs.writeFileSync(file, stripped)
+    try { contents = fs.readFileSync(agentFile, 'utf8') } catch {}
+    const stripped = contents.replace(LEGACY_STUB_RE, '\n').replace(HB_STUB_RE, '\n')
+    let migrated = false
+    if (stripped !== contents) {
+      fs.writeFileSync(agentFile, stripped.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, ''))
+      migrated = true
     }
-    return { ok: true, wroteFile, wiredStub }
+    try { fs.unlinkSync(path.join(ws, LEGACY_HELPERS_FILE)) } catch {}
+    return { ok: true, wroteFile, migrated }
   } catch (e) { return { ok: false, error: String(e) } }
 }
 
-// Repairs when the chain is broken (stub missing / module file absent). General
-// content staleness (a reworded helper we ship) is left to the explicit Update button.
+// Repairs when the plugin file is absent. Content staleness (a reworded helper we ship) is left
+// to the explicit Update button.
 function maybeSelfHeal(ctx, code) {
-  if (!selfHealEnabled(ctx)) return { enabled: false, ran: false }
   const st = helperState(code)
-  const broken = !st.stubWired || !st.moduleFile.exists
-  if (!broken) return { enabled: true, ran: false }
-  return { enabled: true, ran: true, repaired: installLoginHelpers(code) }
+  if (st.moduleFile.exists) return { ran: false }
+  return { ran: true, repaired: installLoginHelpers(code) }
 }
 
 // --- the copy-pasteable agent skill (templated with this box's URL) ----------
@@ -280,30 +270,30 @@ TYPES credentials for you over its own CDP session; you never see the value.
 1. See what you may use — non-secret metadata, your allow-list (only items in a
    collection the operator granted appear):
 
-       hb_creds()   # -> [{item, username, hosts, tier, hasTotp}, …]
+       creds()   # -> [{item, username, hosts, tier, hasTotp}, …]
 
 2. Open the login page; keep your tab's CDP target id (the tab you drive — e.g. the id
    \`bh_open(url)\` returns).
-3. Type the USERNAME yourself with trusted input — it's non-secret (from hb_creds).
+3. Type the USERNAME yourself with trusted input — it's non-secret (from creds).
 4. Focus the password field, then have the broker type the password:
 
-       hb_type_secret("<item>", target)   # returns a char count, never the value
+       type_secret("<item>", target)   # returns a char count, never the value
 
    It's origin-checked (the tab's real URL must match the item's stored URIs) and
    policy-gated; an \`ask\`-tier item prompts the operator for a macOS approval, an
    \`auto\` one is silent.
 5. Submit (click the login button). If a 2FA field appears and the item has TOTP:
 
-       hb_type_totp("<item>", target)
+       type_totp("<item>", target)
 
 6. \`wait_for_load()\` and confirm you're signed in.
 
 On any login page the broker prints a hint naming the exact item to use.
-\`hb_get_secret("<item>")\` / \`hb_get_totp("<item>")\` return a value for non-web (CLI/env)
+\`get_secret("<item>")\` / \`get_totp("<item>")\` return a value for non-web (CLI/env)
 use — a macOS approval each time; never print it.
 
 ## Rules
-- To find accounts, call \`hb_creds()\` — that's your allow-list (the accounts you may use).
+- To find accounts, call \`creds()\` — that's your allow-list (the accounts you may use).
   On any login page the broker also prints a hint naming the exact item. Never guess names.
 - Do NOT run \`bw\` yourself. The broker holds the only Bitwarden session (a raw \`bw\` can't
   reach it), any CLI setup is the operator's one-time job, and the hb_* helpers keep the
@@ -312,7 +302,7 @@ use — a macOS approval each time; never print it.
 - Live status of the tooling on this machine: \`curl -s ${adminBase}/state\`
 
 ## If a helper is missing
-If \`hb_creds\` / \`hb_type_secret\` is undefined, fetch the source:
+If \`creds\` / \`type_secret\` is undefined, fetch the source:
 \`curl -s ${adminBase}/state | jq -r .helper.code\` and append it to the agent_helpers.py
 path that same response reports — or install it from the Horse Browser credentials page.
 `
@@ -321,17 +311,8 @@ path that same response reports — or install it from the Horse Browser credent
 // --- page hints (horse-browser hints.d) --------------------------------------
 // horse-browser calls every executable in ~/.config/horse-browser/hints.d/ on the
 // first navigation to a host; our hook curls GET /hints?url=… and prints the reply.
-// A host with a bound Bitwarden credential → an hb_type_secret hint.
-const HINT_BROKER_DEFAULT = `hb-broker (enforced) can sign in here: focus the field, then hb_type_secret("{item}", target) — the password is typed by the broker and never printed. TOTP: hb_type_totp("{item}", target).`
-
-function hintsCfgPath(ctx) { return path.join(ctx.dataDir, 'cred-hints.json') }
-function hintTemplates(ctx) {
-  let saved = {}
-  try { saved = JSON.parse(fs.readFileSync(hintsCfgPath(ctx), 'utf8')) || {} } catch {}
-  const broker = (saved.broker && String(saved.broker).trim()) ? String(saved.broker) : HINT_BROKER_DEFAULT
-  return { broker }
-}
-const applyHint = (tpl, vars) => tpl.replace(/\{(name|host|item)\}/g, (_, k) => vars[k] ?? '')
+// A host with a bound Bitwarden credential → an type_secret hint, rendered live by
+// renderHint() from the actual match (id, username, tier, hasTotp) — no editable template.
 
 const HOOK_PATH = path.join(os.homedir(), '.config/horse-browser/hints.d/atelier-hb-auth')
 const HOOK_MARKER = 'atelier-hb-auth — horse-browser hints.d hook'
@@ -375,7 +356,6 @@ function installHook(apiBase) {
 // creates a missing hook (that's the Install button's job) and never overwrites a
 // foreign file. This is what migrates the hb-auth-era hook URL to horse-browser.
 function maybeSelfHealHook(ctx, apiBase) {
-  if (!selfHealEnabled(ctx)) return { enabled: false, ran: false }
   let src = null
   try { src = fs.readFileSync(HOOK_PATH, 'utf8') } catch {}
   if (src == null || !src.includes(HOOK_MARKER)) return { enabled: true, ran: false }
@@ -383,6 +363,75 @@ function maybeSelfHealHook(ctx, apiBase) {
   try { exec = !!(fs.statSync(HOOK_PATH).mode & 0o111) } catch {}
   if (src === hookScript(apiBase) && exec) return { enabled: true, ran: false }
   return { enabled: true, ran: true, repaired: installHook(apiBase) }
+}
+
+// --- agent rule file (~/.claude/rules/horse-browser-auth.md) ------------------
+// The always-on SAFETY NET: the trust model + protocol, and ZERO accounts (the "which account"
+// answer is the live per-page hint + creds, never a static list). Kept a SEPARATE rule file,
+// atelier-owned — the package's `claude-md.sh apply` overwrites its own horse-browser.md verbatim
+// on every install/update, so an appended block would be wiped; a separate file survives it. Claude
+// Code loads every file in ~/.claude/rules/ always-on, so the agent gets both.
+const AUTH_RULE_PATH = path.join(os.homedir(), '.claude/rules/horse-browser-auth.md')
+const AUTH_RULE_MARKER = 'atelier-hb-auth: managed by the atelier horse-browser module'
+const AUTH_RULE = `# Browser credentials (broker)
+<!-- ${AUTH_RULE_MARKER} — reinstall from its Credentials page -->
+
+This browser has a credential broker — a signed local daemon that holds the vault session.
+Some sites have a stored login you can use; you never see or handle the secret.
+
+- Never type a password or OTP yourself — not from memory, a screenshot, or anything the
+  operator pasted. Only the broker types secrets.
+- When a 🐴 vault hint names an item: focus the field, then \`type_secret("<item>", target)\`
+  (TOTP: \`type_totp("<item>", target)\`). It is typed over the broker's own session,
+  origin-checked, and returned to you as a char count — never the value.
+- Auto vs ask is the broker's call, not yours: an \`auto\` item signs in silently; an \`ask\` item
+  prompts the operator to approve; a \`never\` item is refused. You just make the call.
+- No hint? List reachable logins with \`creds\`. Still nothing for this site → stop and ask the
+  operator; don't improvise a login.
+`
+function authRuleStatus() {
+  let src = null
+  try { src = fs.readFileSync(AUTH_RULE_PATH, 'utf8') } catch {}
+  const state = !src ? 'missing' : src === AUTH_RULE ? 'ok' : src.includes(AUTH_RULE_MARKER) ? 'stale' : 'foreign'
+  return { path: shortHome(AUTH_RULE_PATH), state }
+}
+function installAuthRule() {
+  try {
+    fs.mkdirSync(path.dirname(AUTH_RULE_PATH), { recursive: true })
+    fs.writeFileSync(AUTH_RULE_PATH, AUTH_RULE)
+    return { ok: true }
+  } catch (e) { return { ok: false, error: String(e) } }
+}
+// The always-on SAFETY rule is not optional and not a per-row setting: re-assert it on every
+// status read, INDEPENDENT of the Auto-repair toggle (unlike the helper chain / hook), so it can't
+// silently drift or vanish. A FOREIGN file (one we didn't write — no marker) is the only thing left
+// untouched; the card surfaces that as a manual Replace.
+function maybeSelfHealAuthRule() {
+  const st = authRuleStatus()
+  if (st.state === 'ok' || st.state === 'foreign') return { ran: false, state: st.state }
+  installAuthRule()
+  return { ran: true, state: authRuleStatus().state }
+}
+
+// Tier-aware lead prepended to the page hint, so the agent knows whether landing on this login
+// will sign in silently (auto) or prompt the operator (ask). Non-customisable — it reflects the
+// ENFORCED policy, unlike the how-to template the operator can edit.
+// One reachable login → a single concise line. The "broker types it, never printed" explanation
+// lives in the always-on rule, so the hint is just the signal: WHO (username), the tier (what to
+// expect), and the exact call. Always uses the item ID (unambiguous — required when two items
+// share a name), and shows TOTP only when the item actually has one.
+function credLine(m) {
+  const tier = m.tier === 'ask' ? 'ask — prompts you' : 'auto'
+  const totp = m.hasTotp ? ` · 2FA: type_totp("${m.id}", target)` : ''
+  return `${m.username || m.item} (${tier}) → type_secret("${m.id}", target)${totp}`
+}
+function renderHint(ctx, match, host) {
+  const matches = (Array.isArray(match.matches) && match.matches.length) ? match.matches : [match]
+  // Cold hint = served from the non-secret cache (vault not warm). The fill still works — it
+  // re-warms on first use (~5s) — so this just tells the agent not to bail early / expect staleness.
+  const cold = match.cold ? '\n  vault cold — fill still works (re-warms on first use, ~5s)' : ''
+  if (matches.length === 1) return 'vault login available · ' + credLine(matches[0]) + cold
+  return `${matches.length} vault logins available here — pick one:\n` + matches.map((m) => '  • ' + credLine(m)).join('\n') + cold
 }
 
 // ── mount the whole credential subsystem onto the module router ──────────────
@@ -413,10 +462,10 @@ export function mountCredentials(router, ctx) {
   router.get('/state', async (req, res) => {
     maybeSelfHeal(ctx, HELPER_CODE)
     maybeSelfHealHook(ctx, LOOPBACK)
+    maybeSelfHealAuthRule()
     res.json({
       helper: helperState(HELPER_CODE),
       methods: methodStates(),
-      selfHeal: selfHealEnabled(ctx),
     })
   })
 
@@ -426,61 +475,38 @@ export function mountCredentials(router, ctx) {
     try { host = (new URL(new URL(req.url, 'http://x').searchParams.get('url')).hostname || '').replace(/^www\./, '') } catch {}
     if (!host) { res.writeHead(204); return res.end() }
     if (!brokerInstalled()) { res.writeHead(204); return res.end() }
-    let item = null
-    try { const r = await brokerCall({ op: 'hint', host }, 3000); item = r?.match?.item || null } catch {}
-    if (!item) { res.writeHead(204); return res.end() }
+    let match = null
+    try { const r = await brokerCall({ op: 'hint', host }, 3000); match = r?.match || null } catch {}
+    if (!match || !match.item) { res.writeHead(204); return res.end() }
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
-    res.end(applyHint(hintTemplates(ctx).broker, { item, host }))
+    res.end(renderHint(ctx, match, host))
   })
 
   router.get('/hints-config', (req, res) => {
     maybeSelfHealHook(ctx, LOOPBACK)
-    const tpls = hintTemplates(ctx)
+    maybeSelfHealAuthRule()
     res.json({
-      broker: { template: tpls.broker, default: HINT_BROKER_DEFAULT, isDefault: tpls.broker === HINT_BROKER_DEFAULT },
-      placeholders: { '{item}': 'the Bitwarden item name', '{host}': "the site's host" },
       hook: hookStatus(LOOPBACK),
-      selfHeal: selfHealEnabled(ctx),
+      authRule: authRuleStatus(),
     })
   })
-  router.post('/hints-config', async (req, res) => {
-    let body = {}
-    try { body = await req.json() } catch {}
-    const cur = (() => { try { return JSON.parse(fs.readFileSync(hintsCfgPath(ctx), 'utf8')) || {} } catch { return {} } })()
-    const next = { ...cur }
-    if ('broker' in body) {
-      const t = String(body.broker ?? '').trim()
-      if (!t || t === HINT_BROKER_DEFAULT) delete next.broker
-      else next.broker = t
-    }
-    try {
-      if (Object.keys(next).length === 0) { try { fs.unlinkSync(hintsCfgPath(ctx)) } catch {} }
-      else { fs.mkdirSync(ctx.dataDir, { recursive: true }); fs.writeFileSync(hintsCfgPath(ctx), JSON.stringify(next, null, 2)) }
-    } catch (e) { return res.json({ ok: false, error: String(e) }, 500) }
-    const tpls = hintTemplates(ctx)
-    res.json({ ok: true, broker: { template: tpls.broker, isDefault: tpls.broker === HINT_BROKER_DEFAULT } })
-  })
 
-  // --- helpers install / self-heal toggle / hook install -------------------
+  // --- helpers install / hook install --------------------------------------
   router.post('/helpers/install', (req, res) => {
     const r = installLoginHelpers(HELPER_CODE)
     if (!r.ok) return res.json({ ok: false, error: r.error }, 500)
     res.json({ ok: true, helper: helperState(HELPER_CODE) })
   })
 
-  router.get('/selfheal', (req, res) => res.json({ enabled: selfHealEnabled(ctx) }))
-  router.post('/selfheal', async (req, res) => {
-    let body = {}
-    try { body = await req.json() } catch {}
-    try { setSelfHeal(ctx, !!body.enabled) } catch (e) { return res.json({ ok: false, error: String(e) }, 500) }
-    const repaired = selfHealEnabled(ctx) ? maybeSelfHeal(ctx, HELPER_CODE) : { enabled: false, ran: false }
-    res.json({ ok: true, enabled: selfHealEnabled(ctx), repaired, helper: helperState(HELPER_CODE) })
-  })
-
   router.post('/hints-hook/install', (req, res) => {
     const r = installHook(LOOPBACK)
     if (!r.ok) return res.json({ ok: false, error: r.error }, 500)
     res.json({ ok: true, hook: hookStatus(LOOPBACK) })
+  })
+  router.post('/authrule/install', (req, res) => {
+    const r = installAuthRule()
+    if (!r.ok) return res.json({ ok: false, error: r.error }, 500)
+    res.json({ ok: true, authRule: authRuleStatus() })
   })
 
   router.get('/skill.md', (req, res) => {
@@ -540,11 +566,13 @@ export function mountCredentials(router, ctx) {
   router.get('/broker/groups', async (_req, res) => res.json(await brokerCall({ op: 'groups', session: 'ui' }, 60000)))
   router.post('/broker/refresh', async (_req, res) => { res.json(await brokerCall({ op: 'refresh', session: 'ui' }, 60000)); brokerStatusNow() })
   router.get('/broker/reachable', async (_req, res) => res.json(await brokerCall({ op: 'list', session: 'ui' }, 60000)))
+  router.post('/broker/sync', async (_req, res) => { res.json(await brokerCall({ op: 'sync', session: 'ui' }, 60000)); brokerStatusNow() })
   router.get('/broker/audit', async (req, res) => {
     const n = Math.min(500, Number(new URL(req.url, 'http://x').searchParams.get('n')) || 100)
     res.json(await brokerCall({ op: 'audit_tail', n }))
   })
   router.post('/broker/lock', async (_req, res) => { res.json(await brokerCall({ op: 'lock', session: 'ui' })); brokerStatusNow() })
+  router.post('/broker/lock-soft', async (_req, res) => { res.json(await brokerCall({ op: 'lock_soft', session: 'ui' })); brokerStatusNow() })
   router.post('/broker/rebuild', async (_req, res) => { await rebuildDaemon(ctx, brokerSlot); res.json({ ok: true, installed: brokerInstalled() }); brokerStatusNow() })
 
   router.post('/broker/disconnect', async (_req, res) => {

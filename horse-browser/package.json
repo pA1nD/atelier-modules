@@ -1,10 +1,10 @@
 {
   "name": "horse-browser",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "license": "MIT",
   "description": "The control board for the Horse Browser — the dedicated browser your agents drive (vendored harness included): setup/status tiles, the enforced Bitwarden credential broker, a real compositing probe + DeskPad lid-closed vision, the live process wall, and the docs agents load. A compact hero links to the full story.",
   "scripts": {
-    "test": "cd native && swift run OriginCheck"
+    "test": "swift run --package-path native --scratch-path \"${TMPDIR:-/tmp/}hb-origincheck.build\" OriginCheck"
   },
   "atelier": {
     "os": [

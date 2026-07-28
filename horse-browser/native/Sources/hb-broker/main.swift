@@ -49,6 +49,9 @@ let AUDIT_PATH = APP_SUPPORT.appendingPathComponent("audit.jsonl")
 // Non-secret collection/folder metadata (names + counts, NOT items/usernames/passwords)
 // cached so the picker can render WITHOUT a fresh unlock — collections don't expose accounts.
 let GROUPS_CACHE_PATH = APP_SUPPORT.appendingPathComponent("groups-cache.json")
+// Non-secret REACHABLE set (item names, usernames, hosts, tier, hasTotp — NEVER passwords/totp),
+// so the frontend can search + agents can hint while the vault is cold. The fill re-validates live.
+let REACHABLE_CACHE_PATH = APP_SUPPORT.appendingPathComponent("reachable-cache.json")
 let LOG_PATH = APP_SUPPORT.appendingPathComponent("broker.log")
 
 let KEYCHAIN_SERVICE = "de.pa1nd.hb-broker"
@@ -210,9 +213,26 @@ func keychainRead(account: String) -> Data? {
   let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                           kSecAttrService as String: KEYCHAIN_SERVICE, kSecAttrAccount as String: account,
                           kSecReturnData as String: true]
-  var out: CFTypeRef?
-  let st = SecItemCopyMatching(q as CFDictionary, &out)
-  guard st == errSecSuccess, let d = out as? Data else {
+  // SecItemCopyMatching BLOCKS on the "allow access?" ACL dialog after a rebuild (the binary's
+  // cdhash changed, so it isn't in the item's ACL yet). A blocked read here runs on a request
+  // handler while holding unlockQ, so left unbounded it wedges the WHOLE daemon — every
+  // session-needing caller piles up behind unlockQ and the thread pool exhausts. So run the read
+  // off-thread and give up after a bounded wait: a silent read is sub-millisecond; anything slower
+  // is a prompt we won't answer from here. Returning nil frees unlockQ so the daemon self-heals.
+  let sem = DispatchSemaphore(value: 0)
+  var data: Data?
+  var st: OSStatus = errSecInteractionNotAllowed
+  DispatchQueue.global().async {
+    var out: CFTypeRef?
+    st = SecItemCopyMatching(q as CFDictionary, &out)
+    data = out as? Data
+    sem.signal()
+  }
+  if sem.wait(timeout: .now() + 5) == .timedOut {
+    log("keychain: read '\(account)' timed out — an approval prompt is up. Click 'Always Allow', then retry.")
+    return nil
+  }
+  guard st == errSecSuccess, let d = data else {
     if st != errSecItemNotFound { log("keychain: read '\(account)' failed (\(st))") }
     return nil
   }
@@ -392,12 +412,13 @@ final class Vault {
   private let queue = DispatchQueue(label: "hb-broker.vault")
   private let unlockQ = DispatchQueue(label: "hb-broker.vault.unlock")   // serializes cold unlocks
 
-  func idleTTL() -> TimeInterval { TimeInterval(Policy.shared.idleUnlockSec) }
-
+  // Warm = the token is loaded and the index has been built (unlockedAt is stamped only after
+  // buildIndex). Stays warm until an explicit lock/disconnect — there is no idle timeout: fill-by-id
+  // + the reachable cache made a cold vault cheap, so auto-expiring warmth bought nothing.
   var isWarm: Bool {
     queue.sync {
-      guard let s = session, !s.isEmpty, let t = unlockedAt else { return false }
-      return Date().timeIntervalSince(t) < idleTTL()
+      guard let s = session, !s.isEmpty else { return false }
+      return unlockedAt != nil
     }
   }
 
@@ -446,7 +467,7 @@ final class Vault {
   // is stored; it was used once at setup to mint this token. A password change or `bw logout` invalidates
   // the token, in which case the operator must reconnect.
   func ensureSession() -> String? {
-    if isWarm { return queue.sync { session } }
+    if isWarm { return queue.sync { session } }   // already warm — reuse the loaded session
     // Serialize the cold unlock so two concurrent requests don't BOTH prompt Touch ID;
     // the loser re-checks isWarm and reuses the session the winner just loaded.
     return unlockQ.sync {
@@ -470,7 +491,7 @@ final class Vault {
         return nil
       }
       queue.sync { session = token; unlockedAt = nil; index = []; indexAt = nil }
-      log("vault: session token loaded (idle ttl \(Int(idleTTL()))s)")
+      log("vault: session token loaded")
       buildIndex(session: token)
       // Become WARM (isWarm → true) only AFTER the index is populated. Setting
       // unlockedAt before buildIndex let a concurrent list()/reachable() observe a
@@ -478,7 +499,7 @@ final class Vault {
       // "Nothing granted yet" flash). A concurrent unlocker now blocks on unlockQ
       // until the index is real. If the index came back empty (a transient
       // `bw list items` failure), stay cold so the next call retries instead of
-      // caching emptiness for the whole idle TTL.
+      // caching emptiness.
       if (queue.sync { index.count }) > 0 { queue.sync { unlockedAt = Date(); lastError = nil } }
       else {
         log("vault: index empty after unlock — staying cold to retry next call")
@@ -486,6 +507,43 @@ final class Vault {
       }
       return token
     }
+  }
+
+  // A usable session token WITHOUT building the full index — the fast path for single-item ops
+  // (fill-by-id, get). The idle TTL drops warmth but KEEPS the cached token, so this reuses it with
+  // no keychain read and no `bw list items` (the ~9s cost); it only reads+validates the keychain
+  // when there's no cached token (fresh daemon). A hard lock/reconnect clears `session`, so a
+  // non-nil token here is a valid one.
+  func ensureSessionLight() -> String? {
+    let cached = queue.sync { session }
+    if let s = cached, !s.isEmpty { return s }
+    return unlockQ.sync {
+      let again = queue.sync { session }
+      if let s = again, !s.isEmpty { return s }
+      guard let token = keychainReadToken(reason: "Unlock the agent Bitwarden vault") else {
+        setError(keychainHasToken() ? "macOS approval was declined — the vault stayed locked."
+                                    : "No Bitwarden session stored yet. Run `hb-broker setup` once to connect.")
+        return nil
+      }
+      let chk = runBw(["status"], session: token)
+      if chk.code == 0, let d = chk.out.data(using: .utf8),
+         let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+         (j["status"] as? String) == "unlocked" {
+        queue.sync { session = token; lastError = nil }
+        return token
+      }
+      setError("The stored Bitwarden session is no longer valid (a `bw logout`, `bw lock`, or a master-password change revokes it). Reconnect: run `hb-broker setup` once.")
+      return nil
+    }
+  }
+
+  // Soft lock: drop the in-memory session so the vault reads as cold, but DON'T `bw lock` — the
+  // token stays valid, so the next use re-warms silently (no reconnect). The idle TTL does this
+  // automatically; this is the on-demand version. (Hard lock is `lock()`, which invalidates the
+  // token and needs a reconnect.)
+  func lockSoft() {
+    queue.sync { session = nil; unlockedAt = nil; index = []; indexAt = nil; bwStatusCache = nil; bwStatusAt = nil }
+    log("vault: soft-locked (in-memory session dropped; token kept — re-warms silently)")
   }
 
   func lock() {
@@ -528,6 +586,15 @@ final class Vault {
       try? d.write(to: GROUPS_CACHE_PATH)
       try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: GROUPS_CACHE_PATH.path)
     }
+    // Persist the NON-SECRET reachable set so the frontend/agents can read it cold. Guarded on a
+    // non-empty raw list: a failed `bw list` (0 items) must NOT clobber a good cache with nothing.
+    if !items.isEmpty {
+      let reach: [String: Any] = ["syncedAt": Date().timeIntervalSince1970, "items": reachableFrom(items)]
+      if let d = try? JSONSerialization.data(withJSONObject: reach) {
+        try? d.write(to: REACHABLE_CACHE_PATH)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: REACHABLE_CACHE_PATH.path)
+      }
+    }
     log("vault: indexed \(items.count) items, \(cols.count) collections, \(flds.count) folders")
   }
 
@@ -559,30 +626,82 @@ final class Vault {
     return byName.count == 1 ? byName[0] : nil
   }
 
-  // The set an agent may use: items whose collection/folder grants a tier other
-  // than never. Never the full vault — items in no granted group don't appear.
-  func reachableList() -> [[String: Any]] {
-    items().compactMap { it -> [String: Any]? in
+  // Resolve ONE item for a fill WITHOUT the ~9s full-index build: `bw get item <cred>` reads a
+  // single item by id (or unambiguous name) directly over a LIGHT session. Falls back to the
+  // full-index itemInfo only when the single fetch misses (a non-unique name). The id comes from
+  // the hint, so this is the common path — it's what makes a cold fill ~warm-fast (~5s, not ~13s).
+  func itemFast(_ cred: String) -> (BwItem, String?)? {
+    if let s = ensureSessionLight() {
+      let r = runBw(["get", "item", cred], session: s)
+      if r.code == 0, let d = r.out.data(using: .utf8),
+         let it = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+        let login = it["login"] as? [String: Any]
+        let uris = (login?["uris"] as? [[String: Any]])?.compactMap { $0["uri"] as? String } ?? []
+        let bw = BwItem(id: it["id"] as? String ?? cred, name: it["name"] as? String ?? "",
+                        username: login?["username"] as? String ?? "", uris: uris,
+                        collectionIds: it["collectionIds"] as? [String] ?? [],
+                        folderId: it["folderId"] as? String,
+                        hasTotp: (login?["totp"] as? String).map { !$0.isEmpty } ?? false)
+        // The SAME fetch already carries the password — hand it back so a password fill doesn't
+        // spawn `bw` a second time. (TOTP still needs `bw get totp` to compute the current code.)
+        return (bw, login?["password"] as? String)
+      }
+    }
+    if let m = itemInfo(cred) { return (m, nil) }   // ambiguous / miss → full index (rare)
+    return nil
+  }
+
+  // The reachable set from a GIVEN items array (pure — no session, no recursion). An item is
+  // reachable when its collection/folder grants a tier other than never. Used both live
+  // (reachableList) and at sync time (buildIndex, on the local list) to write the cache.
+  private func reachableFrom(_ items: [BwItem]) -> [[String: Any]] {
+    items.compactMap { it -> [String: Any]? in
       guard let t = Policy.shared.tierFor(collectionIds: it.collectionIds, folderId: it.folderId), t != .never else { return nil }
       return ["item": it.name, "id": it.id, "username": it.username,
               "hosts": hostsOf(it.uris), "tier": t.rawValue, "hasTotp": it.hasTotp]
     }
   }
 
-  // The allow-list AS A RESULT: an unusable vault is an error, never an empty list.
-  // "No items" must only ever mean "the vault is readable and nothing is granted".
+  // The set an agent may use: items whose collection/folder grants a tier other
+  // than never. Never the full vault — items in no granted group don't appear.
+  func reachableList() -> [[String: Any]] { reachableFrom(items()) }
+
+  // The non-secret reachable cache as { syncedAt, items }, or nil if never synced.
+  func readReachableCache() -> [String: Any]? {
+    guard let d = try? Data(contentsOf: REACHABLE_CACHE_PATH),
+          let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+          obj["items"] is [[String: Any]] else { return nil }
+    return obj
+  }
+
+  // The allow-list AS A RESULT — CACHE-FIRST: serve the non-secret cache with NO unlock and NO
+  // ~9s index build (the frontend reads this constantly; warming happens only on an explicit
+  // sync). The fill re-validates tier + origin live, so a stale tier here is discovery-only.
+  // An unusable vault is an error, never an empty list; "no items" only ever means
+  // "the vault is readable and nothing is granted".
   func reachableResult() -> [String: Any] {
-    let list = reachableList()
-    if let e = vaultError, !isWarm { return ["ok": false, "error": e, "items": []] }
-    // Grants exist on disk but their signature doesn't verify, so tierFor() refuses
-    // every one of them. Reporting an empty list here would read as "nothing granted"
-    // when the truth is "everything is granted and all of it is being refused".
+    // Grants exist on disk but their signature doesn't verify, so tierFor() refuses every one.
+    // Take priority over any cache written when integrity was still OK.
     if !Policy.shared.integrityOk {
       let n = Policy.shared.unverifiedCount
       return ["ok": false, "items": [],
               "error": "Your earlier \(n) grant\(n == 1 ? "" : "s") can't be used any more, so nothing is reachable. Pick the collections again on the Bitwarden source page and hit Save access."]
     }
-    return ["ok": true, "items": list]
+    if let cache = readReachableCache(), let items = cache["items"] as? [[String: Any]] {
+      return ["ok": true, "items": items, "syncedAt": cache["syncedAt"] ?? 0, "fromCache": true]
+    }
+    // No cache yet. Serve live if we happen to be warm; otherwise surface the honest state so the
+    // caller distinguishes "never synced" from "vault broken".
+    if isWarm { return ["ok": true, "items": reachableList(), "syncedAt": queue.sync { indexAt }?.timeIntervalSince1970 ?? 0] }
+    if let e = vaultError { return ["ok": false, "error": e, "items": []] }
+    return ["ok": true, "items": [], "syncedAt": 0, "neverSynced": true]
+  }
+
+  // Explicit sync: warm the vault (unlock → keychain, silent) + rebuild the index, which rewrites
+  // the reachable cache, then return the fresh reachable result. This is the "Sync now" action.
+  func syncReachable() -> [String: Any] {
+    if let s = ensureSession() { buildIndex(session: s) }
+    return reachableResult()
   }
 
   // The picker WITHOUT unlocking: read the cached (non-secret) group metadata and
@@ -602,18 +721,42 @@ final class Vault {
   // A hint match for a host — ONLY while warm (never triggers an unlock prompt, so
   // it's safe to call on every page navigation). nil when cold or no reachable match.
   func hintFor(host: String) -> [String: Any]? {
-    guard isWarm else { return nil }
+    if !isWarm {
+      // Cold: serve DISCOVERY from the non-secret cache — no unlock, safe on every navigation.
+      // The fill (fill-by-id) re-validates live, so a cold hint just tells the agent the login
+      // exists; cold:true + syncedAt let the caller note it may be stale.
+      guard let cache = readReachableCache(), let cached = cache["items"] as? [[String: Any]] else { return nil }
+      var matches: [[String: Any]] = []
+      for it in cached {
+        let hosts = (it["hosts"] as? [String]) ?? []
+        if hostMatches(host, bound: hosts) {
+          matches.append(["item": it["item"] ?? "", "id": it["id"] ?? "",
+                          "username": it["username"] ?? "", "tier": it["tier"] ?? "", "hasTotp": it["hasTotp"] ?? false])
+        }
+      }
+      guard var out = matches.first else { return nil }
+      out["matches"] = matches; out["cold"] = true; out["syncedAt"] = cache["syncedAt"] ?? 0
+      return out
+    }
     let snapshot: [BwItem] = queue.sync { index }
+    var matches: [[String: Any]] = []
     for it in snapshot {
       guard let t = Policy.shared.tierFor(collectionIds: it.collectionIds, folderId: it.folderId), t != .never else { continue }
-      if hostMatches(host, bound: hostsOf(it.uris)) { return ["item": it.name, "tier": t.rawValue] }
+      if hostMatches(host, bound: hostsOf(it.uris)) {
+        matches.append(["item": it.name, "id": it.id, "username": it.username, "tier": t.rawValue, "hasTotp": it.hasTotp])
+      }
     }
-    return nil
+    guard var out = matches.first else { return nil }
+    // Legacy single-match fields (item/tier) stay at the top for back-compat; `matches` carries
+    // EVERY login bound to this host so the caller can show usernames and disambiguate same-name
+    // items (e.g. two "canva.com" accounts) by id.
+    out["matches"] = matches
+    return out
   }
 
 
   func getField(_ field: String, item: String) -> String? {
-    guard let s = ensureSession() else { return nil }
+    guard let s = ensureSessionLight() else { return nil }   // single-item get — no full-index build
     let r = runBw(["get", field, item], session: s)
     guard r.code == 0, !r.out.isEmpty else { log("vault: get \(field) failed: \(r.err)"); return nil }
     return r.out
@@ -636,7 +779,6 @@ struct GroupRule { var kind: String; var name: String; var tier: Tier }
 final class Policy {
   static let shared = Policy()
   private let queue = DispatchQueue(label: "hb-broker.policy")
-  private(set) var idleUnlockSec: Int = 3600
   private(set) var groups: [String: GroupRule] = [:]   // key "col:<id>" | "fld:<id>"
   private(set) var integrityOk = true                  // false ⇒ policy.json failed its MAC check
   // How many grants the unverifiable file claimed. Lets the UI say "your 2 earlier
@@ -668,18 +810,17 @@ final class Policy {
       queue.sync { integrityOk = true; unverifiedCount = 0 }   // no file → nothing to protect
       return
     }
-    let idle = (j["idleUnlockSec"] as? Int) ?? 3600
-    let g = parseGroups(j)
+    let g = parseGroups(j)   // a legacy idleUnlockSec field, if present, is ignored — no idle timeout
     // Empty policy grants nothing, so there's nothing to protect — accept as-is.
-    if g.isEmpty { queue.sync { idleUnlockSec = idle; groups = [:]; integrityOk = true; unverifiedCount = 0 }; return }
+    if g.isEmpty { queue.sync { groups = [:]; integrityOk = true; unverifiedCount = 0 }; return }
     // Non-empty grants MUST carry a valid MAC signed by our cdhash-bound key. A tampered
     // policy.json (or a changed key/binary) fails here → fail CLOSED: grant nothing.
     let sig = (try? String(contentsOf: POLICY_SIG_PATH, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
     if let key = policyMacKey(), let sig = sig, sig == hmacHex(d, key) {
-      queue.sync { idleUnlockSec = idle; groups = g; integrityOk = true; unverifiedCount = 0 }
+      queue.sync { groups = g; integrityOk = true; unverifiedCount = 0 }
     } else {
       log("policy: INTEGRITY CHECK FAILED — refusing ALL grants (policy.json tampered, or key/binary changed → reconnect)")
-      queue.sync { idleUnlockSec = 3600; groups = [:]; integrityOk = false; unverifiedCount = g.count }
+      queue.sync { groups = [:]; integrityOk = false; unverifiedCount = g.count }
     }
   }
 
@@ -687,7 +828,7 @@ final class Policy {
     queue.sync {
       var gs: [String: Any] = [:]
       for (k, v) in groups { gs[k] = ["kind": v.kind, "name": v.name, "tier": v.tier.rawValue] }
-      return ["version": 2, "idleUnlockSec": idleUnlockSec, "groups": gs]
+      return ["version": 2, "groups": gs]
     }
   }
 
@@ -739,9 +880,8 @@ final class Policy {
   }
 
   func apply(_ proposed: [String: Any]) {
-    let idle = (proposed["idleUnlockSec"] as? Int) ?? idleUnlockSec
     let g = parseGroups(proposed)
-    queue.sync { idleUnlockSec = max(60, idle); groups = g; integrityOk = true; unverifiedCount = 0 }
+    queue.sync { groups = g; integrityOk = true; unverifiedCount = 0 }
     save()
   }
 
@@ -913,7 +1053,7 @@ func handle(_ req: [String: Any]) -> [String: Any] {
 
   case "status":
     return ["ok": true, "vault": vault.status(), "socket": SOCK_PATH,
-            "idleUnlockSec": Policy.shared.idleUnlockSec, "policyOk": Policy.shared.integrityOk,
+            "policyOk": Policy.shared.integrityOk,
             "policyUnverified": Policy.shared.unverifiedCount,
             "granted": Policy.shared.grantedCount]
 
@@ -945,6 +1085,11 @@ func handle(_ req: [String: Any]) -> [String: Any] {
     // Rescan the live vault (unlock → Touch ID) and refresh the cache.
     return ["ok": true, "groups": vault.rescanGroups()]
 
+  case "sync":
+    // Explicit "Sync now": warm + rebuild, rewriting the reachable cache, then return the fresh
+    // reachable set. Distinct from `list` (which serves the cache without warming).
+    return vault.syncReachable()
+
   case "hint":
     // Loopback hint for a host — resolves only while warm, so it never prompts on
     // navigation. Returns { match: {item, tier} } or { match: null }.
@@ -975,6 +1120,11 @@ func handle(_ req: [String: Any]) -> [String: Any] {
   case "lock":
     vault.lock(); audit(["event": "lock", "session": session]); return ["ok": true]
 
+  case "lock_soft":
+    // Soft lock: drop the in-memory session but keep the token valid — re-warms silently, no
+    // reconnect. (Hard `lock` runs `bw lock` and needs a reconnect.)
+    vault.lockSoft(); audit(["event": "lock_soft", "session": session]); return ["ok": true]
+
   case "reset":
     // Disconnect Bitwarden: forget the master password (Keychain), drop the
     // session, and clear the access rules + audit. The daemon stays installed so
@@ -987,8 +1137,9 @@ func handle(_ req: [String: Any]) -> [String: Any] {
                    kSecAttrAccount as String: KEYCHAIN_MAC_ACCOUNT] as CFDictionary)   // wipe the policy MAC key too
     try? FileManager.default.removeItem(at: POLICY_SIG_PATH)
     try? FileManager.default.removeItem(at: GROUPS_CACHE_PATH)
+    try? FileManager.default.removeItem(at: REACHABLE_CACHE_PATH)
     vault.lock()
-    Policy.shared.apply(["version": 2, "idleUnlockSec": 3600, "groups": [:]])
+    Policy.shared.apply(["version": 2, "groups": [:]])
     try? FileManager.default.removeItem(at: AUDIT_PATH)
     audit(["event": "reset", "session": session, "result": "ok"])
     return ["ok": true]
@@ -1018,8 +1169,9 @@ func handleCredOp(_ op: String, _ req: [String: Any], session: String) -> [Strin
     return deny(reason, detail)
   }
 
-  // Resolve the caller's identifier to a real vault item (may unlock → Touch ID).
-  guard let item = vault.itemInfo(cred) else {
+  // Resolve the caller's identifier to a real vault item. fill-by-id: reads the ONE item directly
+  // (no ~9s full-index build), so a cold fill is ~warm-fast.
+  guard let (item, fastPw) = vault.itemFast(cred) else {
     return logDeny("no-item", "no unique Bitwarden item named '\(cred)' (unknown, ambiguous, or vault locked)")
   }
   audItem = item.name; audUser = item.username; audTotp = item.hasTotp
@@ -1063,8 +1215,12 @@ func handleCredOp(_ op: String, _ req: [String: Any], session: String) -> [Strin
     }
   }
 
-  // Fetch the secret by item id (unambiguous).
-  guard let value = vault.getField(field, item: item.id) else {
+  // Password already came free with itemFast's single fetch — reuse it. TOTP still needs
+  // `bw get totp` to compute the current code, so only the password takes the fast path.
+  let value: String?
+  if field == "password", let pw = fastPw, !pw.isEmpty { value = pw }
+  else { value = vault.getField(field, item: item.id) }
+  guard let value = value else {
     if let s = sessionId { cdp?.detach(s) }
     return logDeny("vault-error", "could not read \(field) for '\(item.name)' (missing field or no auth)")
   }
@@ -1129,6 +1285,12 @@ func serve() {
   log("hb-broker serving on \(SOCK_PATH)  (bw=\(BW ?? "MISSING"), cdp=\(CDP_HOST):\(CDP_PORT))")
   Policy.shared.load()
   DispatchQueue.global().async { _ = vault.status() }   // pre-warm the bw-status cache so the first UI poll is instant
+  // Trigger the keychain ACL prompt EARLY and off the request path. After a rebuild the binary's
+  // cdhash isn't in the item's ACL, so the first read prompts "Always Allow"; doing it here (not on
+  // the first fill) means the operator sees the prompt right after the rebuild and can approve it
+  // before any request needs the vault. The token is discarded — this doesn't pre-warm the vault —
+  // and it's a bare keychain read (no unlockQ), so even a pending prompt can't block a fill.
+  DispatchQueue.global().async { _ = keychainReadToken(reason: "startup ACL check") }
 
   signal(SIGPIPE, SIG_IGN)
 

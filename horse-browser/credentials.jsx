@@ -7,7 +7,7 @@
  * sub-route, plus the compact live status card shown on the board.
  */
 
-import { Reveal, Icon, Modal, cn } from './lib.jsx'
+import { Reveal, Icon, CopyBoom, cn } from './lib.jsx'
 
 const { useState, useEffect, useRef, useMemo, useCallback } = React
 const ACCENT = '#10b981'
@@ -48,15 +48,6 @@ function StatusDot({ color }) {
 function Spinner({ className = 'size-4' }) {
   return <svg viewBox="0 0 24 24" className={cn('animate-spin', className)} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.6" /></svg>
 }
-function Toggle({ on, disabled, onClick }) {
-  return (
-    <button type="button" role="switch" aria-checked={!!on} disabled={disabled} onClick={onClick}
-      className={cn('relative inline-flex h-[22px] w-[38px] shrink-0 items-center rounded-full transition-colors', disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer', !on && 'bg-zinc-600')}
-      style={on ? { background: ACCENT } : undefined}>
-      <span className={cn('inline-block h-[16px] w-[16px] transform rounded-full bg-white shadow transition-transform', on ? 'translate-x-[19px]' : 'translate-x-[3px]')} />
-    </button>
-  )
-}
 function Label({ children, right }) {
   return (
     <div className="flex items-center justify-between gap-3">
@@ -91,31 +82,6 @@ function CopyBox({ code, className = '' }) {
     </div>
   )
 }
-function CodeTerminal({ code, filename }) {
-  const [open, setOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
-  return (
-    <div className="overflow-hidden rounded-xl border border-white/10 bg-black/60">
-      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3.5 py-2">
-        <div className="flex items-center gap-2">
-          <span className="flex gap-1.5" aria-hidden="true"><span className="size-2.5 rounded-full bg-red-500/70" /><span className="size-2.5 rounded-full bg-amber-500/70" /><span className="size-2.5 rounded-full bg-lime-500/70" /></span>
-          {filename && <span className="ml-1 font-mono text-[11px] text-zinc-400">{filename}</span>}
-        </div>
-        <button type="button" onClick={() => copyText(code).then((ok) => { if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1200) } })} className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-medium text-zinc-300 transition hover:bg-white/20">{copied ? 'copied' : 'copy'}</button>
-      </div>
-      <div className="relative">
-        <div className="overflow-hidden transition-[max-height] duration-300 ease-in-out" style={{ maxHeight: open ? '3000px' : '15rem' }}>
-          <pre className="overflow-x-auto whitespace-pre p-3.5 font-mono text-[11.5px] leading-relaxed text-zinc-200">{code}</pre>
-        </div>
-        {!open && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/80 to-transparent" />}
-      </div>
-      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-center gap-1.5 border-t border-white/10 bg-white/[0.02] py-1.5 text-[11px] font-medium text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-200">
-        {open ? 'collapse' : 'expand'}
-        <svg viewBox="0 0 24 24" className={cn('size-3.5 transition-transform', open && 'rotate-180')} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-      </button>
-    </div>
-  )
-}
 
 /* markdown renderer for the agent skill (dark) */
 function mdInline(text, kb) {
@@ -135,6 +101,29 @@ function mdInline(text, kb) {
   }
   return out
 }
+const mdIndent = (l) => (l.match(/^ */)[0] || '').length
+const mdIsMarker = (l) => /^ *(?:[-*]|\d+\.)\s+/.test(l)
+// render one list item's already-dedented lines: pure prose collapses to an inline
+// run (no <p> margins next to the bullet); an item with an indented code block
+// renders wrapped paragraph(s) + <pre> so continuations and code nest under it.
+function mdItemBlock(dl, kb) {
+  const hasCode = dl.some((l) => /^ {4,}/.test(l))
+  if (!hasCode) return mdInline(dl.filter((l) => l.trim() !== '').join(' ').replace(/\s+/g, ' ').trim(), kb)
+  const nodes = []; let k = 0
+  while (k < dl.length) {
+    if (dl[k].trim() === '') { k++; continue }
+    if (/^ {4,}/.test(dl[k])) {
+      const code = []
+      while (k < dl.length && (/^ {4,}/.test(dl[k]) || (dl[k].trim() === '' && k + 1 < dl.length && /^ {4,}/.test(dl[k + 1])))) { code.push(dl[k].replace(/^ {4}/, '')); k++ }
+      nodes.push(<pre key={`${kb}c${k}`} className="my-2 overflow-x-auto rounded-lg bg-black/60 p-3 font-mono text-[11.5px] leading-relaxed text-zinc-100"><code>{code.join('\n')}</code></pre>)
+      continue
+    }
+    const buf = [dl[k]]; k++
+    while (k < dl.length && dl[k].trim() !== '' && !/^ {4,}/.test(dl[k])) { buf.push(dl[k].trim()); k++ }
+    nodes.push(<p key={`${kb}p${k}`} className={nodes.length ? 'mt-2' : ''}>{mdInline(buf.join(' '), `${kb}${k}`)}</p>)
+  }
+  return nodes
+}
 function Markdown({ src }) {
   let s = String(src || '')
   if (s.startsWith('---\n')) { const end = s.indexOf('\n---', 3); if (end !== -1) s = s.slice(end + 4) }
@@ -146,7 +135,41 @@ function Markdown({ src }) {
     if (/^##\s+/.test(ln)) { out.push(<h4 key={out.length} className="mb-2 mt-8 text-[16px] font-semibold text-zinc-100">{mdInline(ln.replace(/^##\s+/, ''), `h2${i}`)}</h4>); i++; continue }
     if (/^#\s+/.test(ln)) { out.push(<h3 key={out.length} className="mb-3 text-[22px] font-bold text-zinc-50">{mdInline(ln.replace(/^#\s+/, ''), `h1${i}`)}</h3>); i++; continue }
     if (/^---\s*$/.test(ln)) { out.push(<div key={out.length} className="my-6 border-t border-white/10" />); i++; continue }
-    if (/^\s*(?:[-*]|\d+\.)\s+/.test(ln)) { const items = []; const ordered = /^\s*\d/.test(ln); while (i < lines.length && /^\s*(?:[-*]|\d+\.)\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*(?:[-*]|\d+\.)\s+/, '')); i++ } out.push(<ul key={out.length} className="my-2 ml-5 space-y-1.5 text-[13.5px] leading-relaxed text-zinc-300" style={{ listStyleType: ordered ? 'decimal' : 'disc' }}>{items.map((it, j) => <li key={j}>{mdInline(it, `li${i}-${j}`)}</li>)}</ul>); continue }
+    if (mdIsMarker(ln)) {
+      const baseIndent = mdIndent(ln)
+      const ordered = /^ *\d+\./.test(ln)
+      // collect the whole list block, keeping each item's wrapped/indented lines
+      const block = []
+      while (i < lines.length) {
+        const l = lines[i]
+        if (l.trim() === '') {
+          let j = i + 1; while (j < lines.length && lines[j].trim() === '') j++
+          if (j < lines.length && (mdIndent(lines[j]) > baseIndent || (mdIsMarker(lines[j]) && mdIndent(lines[j]) === baseIndent))) { block.push(''); i++; continue }
+          break
+        }
+        const ind = mdIndent(l)
+        if (ind < baseIndent) break
+        if (ind === baseIndent && !mdIsMarker(l)) break
+        block.push(l); i++
+      }
+      // split into items on a base-indent marker; everything else belongs to the current item
+      const items = []
+      for (const l of block) {
+        if (mdIsMarker(l) && mdIndent(l) === baseIndent) items.push([l])
+        else if (items.length) items[items.length - 1].push(l)
+      }
+      const Tag = ordered ? 'ol' : 'ul'
+      out.push(
+        <Tag key={out.length} className={cn('my-3 ml-5 space-y-2 text-[13.5px] leading-relaxed text-zinc-300 marker:text-zinc-500', ordered ? 'list-decimal' : 'list-disc')}>
+          {items.map((raw, j) => {
+            const ci = raw[0].match(/^ *(?:[-*]|\d+\.)\s+/)[0].length
+            const dl = raw.map((r, k) => (k === 0 ? r.slice(ci) : r.slice(Math.min(ci, mdIndent(r)))))
+            return <li key={j} className="pl-1">{mdItemBlock(dl, `li${out.length}-${j}`)}</li>
+          })}
+        </Tag>
+      )
+      continue
+    }
     if (ln.trim() === '') { i++; continue }
     const buf = [ln]; i++
     while (i < lines.length && lines[i].trim() !== '' && !/^(#{1,3}\s|```|\s*(?:[-*]|\d+\.)\s|---\s*$)/.test(lines[i])) { buf.push(lines[i]); i++ }
@@ -159,7 +182,7 @@ function Markdown({ src }) {
 const TIER_META = { auto: { color: 'lime', label: 'auto' }, ask: { color: 'amber', label: 'ask' }, never: { color: 'zinc', label: 'never' } }
 function TierPill({ tier }) { const m = TIER_META[tier] || TIER_META.never; return <Badge color={m.color}>{m.label}</Badge> }
 
-const EVENT_LABEL = { type_secret: 'typed password', type_totp: 'typed 2FA code', get_secret: 'read password', get_totp: 'read 2FA code', policy_set: 'access change', lock: 'locked vault', reset: 'disconnected' }
+const EVENT_LABEL = { type_secret: 'typed password', type_totp: 'typed 2FA code', get_secret: 'read password', get_totp: 'read 2FA code', policy_set: 'access change', lock_soft: 'locked vault', lock: 'locked vault (hard)', reset: 'disconnected' }
 const TIER_INK = { auto: 'text-emerald-400', ask: 'text-amber-400', off: 'text-zinc-500', never: 'text-zinc-500' }
 // session codename — byte-identical to statusline.sh / the tab grouper
 const CODE_COLORS = { red: '#f87171', orange: '#fb923c', yellow: '#facc15', green: '#4ade80', cyan: '#22d3ee', blue: '#60a5fa', purple: '#c084fc', pink: '#f472b6' }
@@ -210,19 +233,12 @@ function ConnectBox({ status, setupCmd, cli }) {
 }
 
 function PromptsCallout() {
-  const row = (title, body) => <li className="flex gap-2"><span aria-hidden="true" className="mt-px shrink-0 text-zinc-500">🔒</span><span><Strong>{title}</Strong> — {body}</span></li>
   return (
     <div className="mt-5 flex gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div aria-hidden="true" className="shrink-0 text-[34px] leading-none">🔒</div>
       <div className="min-w-0">
         <div className="text-[13px] font-semibold text-zinc-100">What the 🔒 means</div>
-        <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-400">Anything marked 🔒 hands off to macOS's own security — a real prompt no script can fake or click for you. There are three:</p>
-        <ul className="mt-2 space-y-1.5 text-[12.5px] leading-relaxed text-zinc-400">
-          {row('macOS approval — approve a grant', 'confirms the change when you grant or raise a collection’s access. Lowering or removing is silent.')}
-          {row('macOS approval — an agent uses an “ask” credential', 'each time an agent fills a login you set to ask, you approve it live. auto fills are silent.')}
-          {row('“Always Allow” — once per update', 'after the daemon is rebuilt, macOS re-confirms this exact binary may read the vault token (its identity changed).')}
-        </ul>
-        <p className="mt-2 text-[12px] leading-relaxed text-zinc-500">The approvals are your Mac’s <Strong className="text-zinc-400">login-password</Strong> prompt — a background daemon can’t present the Touch ID sheet, but it’s the same macOS device authentication, unfakeable by any script. Unlocking the vault itself is <Strong className="text-zinc-400">silent</Strong> — only this exact binary can read the token. Viewing collections is free (cached, non-secret).</p>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-400">A 🔒 is a real macOS approval — your Mac’s Touch ID / login-password prompt. You approve it when you raise a collection’s access and each time an agent uses an <Strong className="text-zinc-300">“ask”</Strong> credential; lowering access, <Strong className="text-zinc-300">auto</Strong> fills, unlocking the vault, and viewing collections are all silent.</p>
       </div>
     </div>
   )
@@ -255,13 +271,12 @@ const GROUP_TIERS = [
 ]
 function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, saving, saveMsg }) {
   const [tiers, setTiers] = useState({})
-  const [idle, setIdle] = useState(3600)
   const meta = useRef({})
   useEffect(() => {
     if (!policy) return
     const g = policy.groups || {}; const t = {}
     for (const [k, r] of Object.entries(g)) { t[k] = r.tier === 'never' ? 'off' : (r.tier || 'off'); meta.current[k] = { kind: r.kind, name: r.name } }
-    setTiers(t); setIdle(policy.idleUnlockSec || 3600)
+    setTiers(t)
   }, [policy])
   useEffect(() => {
     if (!groups) return
@@ -273,11 +288,11 @@ function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, savi
   const grantedCount = Object.values(tiers).filter((v) => v && v !== 'off').length
   const savedTiers = useMemo(() => { const g = (policy && policy.groups) || {}; const t = {}; for (const [k, r] of Object.entries(g)) t[k] = r.tier === 'never' ? 'off' : (r.tier || 'off'); return t }, [policy])
   const pending = keys.filter((k) => (tiers[k] || 'off') !== (savedTiers[k] || 'off'))
-  const dirty = pending.length > 0 || Number(idle) !== Number((policy && policy.idleUnlockSec) || 3600)
+  const dirty = pending.length > 0
   const save = () => {
     const out = {}
     for (const [k, v] of Object.entries(tiers)) { if (v === 'off' || !v) continue; const m = meta.current[k] || {}; out[k] = { kind: m.kind || (k.startsWith('fld:') ? 'folder' : 'collection'), name: m.name || k, tier: v } }
-    onSave({ version: 2, idleUnlockSec: Math.max(60, Number(idle) || 3600), groups: out })
+    onSave({ version: 2, groups: out })
   }
   return (
     <div className="space-y-4">
@@ -325,26 +340,39 @@ function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, savi
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-[12px] text-zinc-500">{grantedCount} collection{grantedCount === 1 ? '' : 's'} granted</span>
-        <label className="flex items-center gap-2 text-[12px] text-zinc-400">re-lock the vault after <Field type="number" min="60" value={idle} onChange={(e) => setIdle(e.target.value)} className="w-20 text-right font-mono !py-1" /> s idle</label>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Btn tone="accent" onClick={save} disabled={saving || !dirty} style={!dirty ? { background: 'rgba(255,255,255,.08)' } : undefined}><span aria-hidden="true" className="mr-1">🔒</span>{saving ? 'saving…' : dirty ? `Save access · ${pending.length || 'idle'}` : 'Save access'}</Btn>
+        <Btn tone="accent" onClick={save} disabled={saving || !dirty} style={!dirty ? { background: 'rgba(255,255,255,.08)' } : undefined}><span aria-hidden="true" className="mr-1">🔒</span>{saving ? 'saving…' : dirty ? `Save access · ${pending.length}` : 'Save access'}</Btn>
         {saveMsg && <span className={cn('text-[12.5px]', saveMsg.ok ? 'text-emerald-400' : 'text-rose-400')}>{saveMsg.text}</span>}
-        {dirty && !saving && !saveMsg && <span className="text-[12px] font-medium text-amber-400">not saved yet — {pending.length ? pending.map((k) => `${(meta.current[k] || {}).name || k} → ${tiers[k]}`).join(', ') : 'idle timeout changed'}</span>}
+        {dirty && !saving && !saveMsg && <span className="text-[12px] font-medium text-amber-400">not saved yet — {pending.map((k) => `${(meta.current[k] || {}).name || k} → ${tiers[k]}`).join(', ')}</span>}
         {!dirty && !saveMsg && <span className="text-[11.5px] text-zinc-500">Approves a new or raised grant.</span>}
       </div>
     </div>
   )
 }
 
+function agoText(sec) {
+  if (!sec) return 'never'
+  const d = Math.max(0, Date.now() / 1000 - sec)
+  if (d < 60) return 'just now'
+  if (d < 3600) return Math.floor(d / 60) + 'm ago'
+  if (d < 86400) return Math.floor(d / 3600) + 'h ago'
+  return Math.floor(d / 86400) + 'd ago'
+}
+
 function ReachableSection({ navigate }) {
   const [st, setSt] = useState({ loading: true })
   const [slow, setSlow] = useState(false)
   const [q, setQ] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const apply = (r) => { if (r && r.ok) setSt({ items: r.items || [], syncedAt: r.syncedAt || 0, neverSynced: !!r.neverSynced }); else setSt({ error: r?.error || 'unavailable', reason: r?.reason }) }
+  // Sync now = warm the vault + rebuild the cache (the ONLY action that unlocks). The list itself
+  // reads the cache, so it's instant and never triggers an unlock.
+  const sync = () => { setSyncing(true); postJSON('/broker/sync').then(apply).catch((e) => setSt({ error: String((e && e.message) || e) })).finally(() => setSyncing(false)) }
   useEffect(() => {
     let alive = true
     const t = setTimeout(() => { if (alive) setSlow(true) }, 400)
-    fetch(API + '/broker/reachable').then((x) => x.json()).then((r) => { if (!alive) return; if (r && r.ok) setSt({ items: r.items || [] }); else setSt({ error: r?.error || 'unavailable', reason: r?.reason }) })
+    fetch(API + '/broker/reachable').then((x) => x.json()).then((r) => { if (alive) apply(r) })
       .catch((e) => { if (alive) setSt({ error: String((e && e.message) || e) }) }).finally(() => { if (alive) clearTimeout(t) })
     return () => { alive = false; clearTimeout(t) }
   }, [])
@@ -354,7 +382,7 @@ function ReachableSection({ navigate }) {
       <div className="rounded-xl border border-amber-400/30 bg-amber-400/[0.06] px-4 py-5 text-[13px] text-amber-300"><div className="font-medium">No accounts reachable — this is not an empty list.</div><div className="mt-1.5 text-amber-300/80">{st.error}</div></div>
     </div>
   )
-  if (st.loading) { if (!slow) return null; return <div className="space-y-3"><Label>Reachable accounts</Label><div className="flex items-center gap-2 py-6 text-[13px] text-zinc-400"><Spinner className="size-4" /> reading your vault — a cold vault takes a few seconds to unlock…</div></div> }
+  if (st.loading) { if (!slow) return null; return <div className="space-y-3"><Label>Reachable accounts</Label><div className="flex items-center gap-2 py-6 text-[13px] text-zinc-400"><Spinner className="size-4" /> reading the cache…</div></div> }
   const items = (st.items || []).slice().sort((a, b) => (a.item || '').localeCompare(b.item || ''))
   const autoN = items.filter((i) => i.tier === 'auto').length
   const askN = items.filter((i) => i.tier === 'ask').length
@@ -362,14 +390,23 @@ function ReachableSection({ navigate }) {
   return (
     <div className="space-y-3">
       <Label>Reachable accounts</Label>
-      <p className="max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">The logins inside your granted collections — what an agent can enumerate right now. This list is <Strong>non-secret</Strong>: any agent reads it via <Code>hb_creds</Code>. The password and TOTP never appear here — those go through <Code>hb_type_secret</Code> / <Code>hb_get_secret</Code>, gated by tier, origin, and a macOS approval.</p>
+      <p className="max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">The logins inside your granted collections — what an agent can enumerate right now. This list is <Strong>non-secret</Strong>: any agent reads it via <Code>creds</Code>. The password and TOTP never appear here — those go through <Code>type_secret</Code> / <Code>get_secret</Code>, gated by tier, origin, and a macOS approval.</p>
       {items.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-[13px] text-zinc-500">Nothing granted yet — set a collection to <Code>ask</Code> or <Code>auto</Code> in <button type="button" onClick={() => navigate && navigate('credentials')} className="underline underline-offset-2 hover:text-zinc-300">Settings</button>.</div>
+        st.neverSynced ? (
+          <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-[13px] text-zinc-500">Not synced yet — <button type="button" onClick={sync} disabled={syncing} className="underline underline-offset-2 hover:text-zinc-300 disabled:opacity-50">{syncing ? 'syncing…' : 'Sync now'}</button> to read your granted collections.</div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-[13px] text-zinc-500">Nothing granted yet — set a collection to <Code>ask</Code> or <Code>auto</Code> in <button type="button" onClick={() => navigate && navigate('credentials')} className="underline underline-offset-2 hover:text-zinc-300">Settings</button>.</div>
+        )
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Field value={q} onChange={(e) => setQ(e.target.value)} placeholder="filter…" className="w-full max-w-xs" />
-            <span className="text-[12.5px] text-zinc-500">{autoN} auto{askN ? ' · ' + askN + ' ask' : ''} · {items.length} reachable</span>
+            <div className="flex items-center gap-2.5 text-[12.5px] text-zinc-500">
+              <span>{autoN} auto{askN ? ' · ' + askN + ' ask' : ''} · {items.length} reachable</span>
+              <span className="text-zinc-600">·</span>
+              <span>synced {agoText(st.syncedAt)}</span>
+              <button type="button" onClick={sync} disabled={syncing} className="rounded-md border border-white/10 px-2 py-0.5 font-medium text-zinc-300 transition hover:bg-white/5 disabled:opacity-50">{syncing ? 'syncing…' : 'Sync now'}</button>
+            </div>
           </div>
           <div className="overflow-hidden rounded-xl border border-white/10">
             <table className="w-full border-collapse text-left text-[13px]">
@@ -412,7 +449,9 @@ function AuditFeed({ events }) {
             {e.tier && <TierPill tier={e.tier} />}
             {(e.changes || []).map((c, j) => <span key={j} className="inline-flex items-center gap-1.5"><span className="font-medium text-zinc-100">{c.name}</span><span className="text-zinc-500">{c.from} →</span><span className={cn('font-medium', TIER_INK[c.to] || 'text-zinc-400')}>{c.to}</span></span>)}
             {e.result === 'denied' && <span className="text-rose-400">{e.reason}</span>}
-            <span className="ml-auto inline-flex items-center gap-1 pl-2" title={e.session}><span aria-hidden="true" className="text-[11px]">{cn2.emoji}</span><span className="font-mono text-[11px] font-semibold" style={{ color: cn2.hex }}>{cn2.callsign}</span></span>
+            {e.session === 'ui'
+              ? <span className="ml-auto pl-2 font-mono text-[11px] text-zinc-600" title="done from this dashboard">system</span>
+              : <span className="ml-auto inline-flex items-center gap-1 pl-2" title={e.session}><span aria-hidden="true" className="text-[11px]">{cn2.emoji}</span><span className="font-mono text-[11px] font-semibold" style={{ color: cn2.hex }}>{cn2.callsign}</span></span>}
           </div>
         )
       })}
@@ -421,97 +460,64 @@ function AuditFeed({ events }) {
 }
 
 /* ─────────────────────── agent helpers + hints (advanced) ─────────────────── */
-function HelperSection({ helper: initial, reload }) {
-  const [helper, setHelper] = useState(initial)
+// Compact health CARD (dashboard, next to Connection): are the helper calls, the per-site hint
+// hook, and the always-on rule wired up? Fix buttons inline; the full reference lives on the
+// docs page (navigate('docs')). Self-fetching — drops in anywhere.
+function AgentIntegration({ navigate }) {
+  const [helper, setHelper] = useState(null)
+  const [cfg, setCfg] = useState(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
-  const [selfHeal, setSelfHeal] = useState(null)
-  const [healBusy, setHealBusy] = useState(false)
-  const [healNote, setHealNote] = useState('')
-  useEffect(() => { setHelper(initial) }, [initial])
-  useEffect(() => { fetch(API + '/selfheal').then((r) => r.json()).then((c) => setSelfHeal(!!c.enabled)).catch(() => {}) }, [])
-  if (!helper) return null
-  const mf = helper.moduleFile
-  const managed = !!(mf?.exists && helper.stubWired)
-  const state = managed && mf.current ? 'ok' : managed ? 'outdated' : 'missing'
-  const install = async () => { setBusy(true); setNote(''); try { const r = await postJSON('/helpers/install'); if (r.ok) { setHelper(r.helper); setNote('installed — running lanes pick it up on their next daemon spawn'); reload && reload() } else setNote(r.error || 'install failed') } catch { setNote('install failed') } finally { setBusy(false) } }
-  const toggleHeal = async () => { const next = !selfHeal; setHealBusy(true); setHealNote(''); try { const r = await postJSON('/selfheal', { enabled: next }); if (r.ok) { setSelfHeal(!!r.enabled); if (r.helper) setHelper(r.helper); setHealNote(r.repaired?.ran ? 're-wired just now' : next ? 'on' : 'off') } else setHealNote(r.error || 'failed') } catch { setHealNote('failed') } finally { setHealBusy(false) } }
+  const loadHelper = useCallback(() => fetch(API + '/state').then((r) => r.json()).then((c) => setHelper(c.helper)).catch(() => {}), [])
+  const loadCfg = useCallback(() => fetch(API + '/hints-config').then((r) => r.json()).then(setCfg).catch(() => {}), [])
+  useEffect(() => { loadHelper(); loadCfg() }, [loadHelper, loadCfg])
+  const mf = helper?.moduleFile
+  const managed = !!mf?.exists
+  const hState = !helper ? null : (managed && mf.current ? 'ok' : managed ? 'outdated' : 'missing')
+  const hook = cfg?.hook, ar = cfg?.authRule
+  const dot = (s) => (s === 'ok' ? 'lime' : s == null || s === 'missing' ? 'zinc' : 'amber')
+  const post = async (p, okNote, after) => { setBusy(true); setNote(''); try { const r = await postJSON(p); setNote(r.ok ? okNote : (r.error || 'failed')); if (r.ok) await after() } catch { setNote('failed') } finally { setBusy(false) } }
   return (
-    <div>
-      <Label right={<Badge color={state === 'ok' ? 'lime' : 'zinc'}>{state === 'ok' ? 'installed' : state === 'outdated' ? 'update available' : 'not installed'}</Badge>}>The agent helpers · shipped by this module</Label>
-      <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">The module owns <Code>{mf?.path || 'atelier_login_helpers.py'}</Code> and overwrites it on every install/update; a one-time stub in <Code>agent_helpers.py</Code> (which the horse-browser harness auto-loads on every call) loads it — your own code in that file is never touched.</p>
-      <div className={cn('mt-4 flex items-center justify-between gap-3 rounded-lg px-3.5 py-2.5', state === 'ok' ? 'bg-emerald-400/10' : 'bg-white/[0.04]')}>
-        <div className="flex min-w-0 items-center gap-2.5 text-[13px] text-zinc-300">
-          <StatusDot color={state === 'ok' ? 'lime' : state === 'outdated' ? 'amber' : 'zinc'} />
-          <span className="min-w-0 truncate">{state === 'ok' ? <>installed &amp; current — <Code>{mf.path}</Code></> : state === 'outdated' ? 'installed, but the module ships a newer version' : !helper.fileExists ? 'horse-browser harness workspace not found — install horse-browser first' : 'not installed — agents can’t call hb_creds / hb_type_secret yet'}</span>
-          <span className="shrink-0 text-[12px] text-zinc-500">{note}</span>
-        </div>
-        {state !== 'ok' && helper.fileExists && <Btn tone="outline" disabled={busy} onClick={install}>{state === 'outdated' ? 'Update helpers' : 'Install helpers'}</Btn>}
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Agent integration</span>
+        <button onClick={() => navigate('docs')} className="text-[12px] text-zinc-400 transition hover:text-zinc-100">reference →</button>
       </div>
-      <div className="mt-2.5 flex items-center justify-between gap-4 rounded-lg border border-white/10 px-3.5 py-2.5">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] font-medium text-zinc-200">Auto-repair{healNote && <span className="text-[11.5px] font-normal text-zinc-500">· {healNote}</span>}</div>
-          <div className="mt-0.5 max-w-xl text-[12.5px] text-zinc-500">Re-wires the load stub in <Code>agent_helpers.py</Code> if a stray cleanup orphans the helpers, and re-asserts the hint hook below (its API base) after a port/mount change. Off = only the manual buttons repair them.</div>
+      <div className="divide-y divide-white/5">
+        <div className="flex items-start justify-between gap-3 py-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5 text-[13px] text-zinc-300"><StatusDot color={dot(hState)} /><span className="min-w-0 truncate">{hState === 'ok' ? 'helper calls' : hState === 'outdated' ? 'helper calls — update' : hState === 'missing' ? (helper?.harnessReady ? 'helper calls — not installed' : 'helper calls — install horse-browser') : 'helper calls…'}</span></div>
+            <div className="mt-0.5 pl-[18px] text-[11.5px] leading-snug text-zinc-500">the broker verbs (<span className="cl-mono text-zinc-400">type_secret</span>, <span className="cl-mono text-zinc-400">creds</span>…) agents call to reach the vault</div>
+          </div>
+          {hState && hState !== 'ok' && helper?.harnessReady && <Btn tone="outline" disabled={busy} onClick={() => post('/helpers/install', 'installed', loadHelper)}>{hState === 'outdated' ? 'Update' : 'Install'}</Btn>}
         </div>
-        <Toggle on={!!selfHeal} disabled={healBusy || selfHeal === null} onClick={toggleHeal} />
+        <div className="flex items-start justify-between gap-3 py-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5 text-[13px] text-zinc-300"><StatusDot color={dot(hook?.state)} /><span className="min-w-0 truncate">{hook?.state === 'ok' ? 'per-site hint hook' : hook ? 'per-site hint hook — not installed' : 'per-site hint hook…'}</span></div>
+            <div className="mt-0.5 pl-[18px] text-[11.5px] leading-snug text-zinc-500">shows agents a saved login exists when they open a site</div>
+          </div>
+          {hook && hook.state !== 'ok' && <Btn tone="outline" disabled={busy} onClick={() => post('/hints-hook/install', 'hook installed', loadCfg)}>{hook.state === 'missing' ? 'Install' : 'Reinstall'}</Btn>}
+        </div>
+        <div className="flex items-start justify-between gap-3 py-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5 text-[13px] text-zinc-300"><StatusDot color={dot(ar?.state)} /><span className="min-w-0 truncate">{!ar ? 'always-on agent rule…' : ar.state === 'foreign' ? 'always-on agent rule — your own file' : 'always-on agent rule'}</span></div>
+            <div className="mt-0.5 pl-[18px] text-[11.5px] leading-snug text-zinc-500">{ar?.state === 'foreign' ? 'a rule file we didn’t write is here — Replace to manage it here' : 'always installed — tells every agent to use the broker, never type a secret'}</div>
+          </div>
+          {ar?.state === 'foreign' && <Btn tone="outline" disabled={busy} onClick={() => post('/authrule/install', 'rule installed', loadCfg)}>Replace</Btn>}
+        </div>
       </div>
-      <ul className="mt-4 divide-y divide-white/5">
-        {(helper.helpers || []).map((h) => (
-          <li key={h.name} className="flex items-start gap-3 py-2.5"><span className="mt-1"><StatusDot color={h.installed ? 'lime' : 'zinc'} /></span><div className="min-w-0"><code className="font-mono text-[12.5px] text-zinc-200">{h.signature}</code><div className="text-[13px] text-zinc-400">{h.summary}</div></div></li>
-        ))}
-      </ul>
-      <div className="mt-4"><div className="mb-1.5 text-[12px] font-medium text-zinc-400">What the module installs (read-only — Install/Update writes exactly this)</div><CodeTerminal code={helper.code} filename="atelier_login_helpers.py" /></div>
+      {note && <div className="mt-2 text-[11.5px] text-zinc-500">{note}</div>}
     </div>
   )
 }
 
-function HintTemplateEditor({ cfg, post, busy }) {
-  const block = cfg?.broker
-  const [tpl, setTpl] = useState('')
-  useEffect(() => { if (block) setTpl(block.template) }, [block?.template])
-  if (!block) return null
-  const dirty = tpl !== block.template
-  const preview = '🐴 horse-browser: ' + (tpl || '').replace(/\{item\}/g, 'github.com').replace(/\{host\}/g, 'github.com')
-  return (
-    <div>
-      <div className="text-[12.5px] font-medium text-zinc-300">Bitwarden match → hb_type_secret</div>
-      <textarea value={tpl} onChange={(e) => setTpl(e.target.value)} rows={2} spellCheck={false} className="mt-1.5 w-full resize-y rounded-lg border border-white/10 bg-white/[0.03] p-3 font-mono text-[12.5px] leading-relaxed text-zinc-200 outline-none focus:border-white/30" />
-      <div className="mt-1.5 rounded-lg bg-white/[0.04] px-3 py-2 font-mono text-[12px] leading-relaxed text-zinc-400">{preview}</div>
-      <div className="mt-2 flex items-center gap-2">
-        <Btn tone="accent" disabled={busy || !dirty || !tpl.trim()} style={!dirty ? { background: 'rgba(255,255,255,.08)' } : undefined} onClick={() => post('/hints-config', { broker: tpl }, 'saved')}>Save</Btn>
-        {!block.isDefault && <Btn tone="outline" disabled={busy} onClick={() => post('/hints-config', { broker: '' }, 'reset')}>Reset to default</Btn>}
-      </div>
-    </div>
-  )
-}
-function HintsSection() {
-  const [cfg, setCfg] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState('')
-  const load = useCallback(() => fetch(API + '/hints-config').then((r) => r.json()).then(setCfg).catch(() => {}), [])
-  useEffect(() => { load() }, [load])
-  const post = async (p, body, okNote) => { setBusy(true); setNote(''); try { const r = await postJSON(p, body); setNote(r.ok ? okNote : (r.error || 'failed')); if (r.ok) await load() } catch { setNote('failed — is the server reachable?') } finally { setBusy(false) } }
-  const hook = cfg?.hook
-  const hookDot = hook?.state === 'ok' ? 'lime' : hook?.state === 'missing' ? 'zinc' : 'amber'
-  const hookLabel = !hook ? 'checking…' : hook.state === 'ok' ? <>hook installed — <Code>{hook.path}</Code></> : hook.state === 'missing' ? 'hook not installed — agents get no credential hints yet' : hook.state === 'foreign' ? <>an unrecognised file sits at <Code>{hook.path}</Code> — installing replaces it</> : 'hook outdated — reinstall to refresh it'
-  return (
-    <div>
-      <Label right={<span className="text-[12px] text-zinc-500">{note}</span>}>Credential hints · agents learn a site has a credential</Label>
-      <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">On the first navigation to each host, horse-browser runs every hook in <Code>~/.config/horse-browser/hints.d/</Code> and surfaces its output as a <Code>🐴</Code> line. Ours curls this module's <Code>/hints</Code>: when the Bitwarden broker holds a credential for the site, it points the agent at <Code>hb_type_secret</Code>.</p>
-      <div className={cn('mt-4 flex items-center justify-between gap-3 rounded-lg px-3.5 py-2.5', hook?.state === 'ok' ? 'bg-emerald-400/10' : 'bg-white/[0.04]')}>
-        <div className="flex min-w-0 items-center gap-2.5 text-[13px] text-zinc-300"><StatusDot color={hookDot} /><span className="min-w-0 truncate">{hookLabel}</span></div>
-        {hook && hook.state !== 'ok' && <Btn tone="outline" disabled={busy} onClick={() => post('/hints-hook/install', null, 'hook installed')}>{hook.state === 'missing' ? 'Install hook' : 'Reinstall hook'}</Btn>}
-      </div>
-      <div className="mt-4"><HintTemplateEditor cfg={cfg} post={post} busy={busy} /></div>
-    </div>
-  )
-}
 
 // "hand this to an agent" — the login skill, in a reading modal
 function AgentSpark() {
   return <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0"><path fill="currentColor" d="M11 3C11.4 9 13.6 11.1 19.5 12.5C13.6 13.9 11.4 16 11 22C10.6 16 8.4 13.9 2.5 12.5C8.4 11.1 10.6 9 11 3Z" /></svg>
 }
-function SkillModal({ onClose }) {
+export function Skill({ self, navigate }) {
+  setApi(self)
   const [md, setMd] = useState(null)
   const [raw, setRaw] = useState(false)
   useEffect(() => { fetch(API + '/skill.md').then((r) => r.text()).then(setMd).catch(() => setMd('(could not load the skill)')) }, [])
@@ -519,34 +525,40 @@ function SkillModal({ onClose }) {
   const prompt = `I'm giving you a skill — read it and use it: ${fullUrl}`
   const seg = (a) => cn('rounded-md px-2.5 py-1 text-[11px] font-semibold transition', a ? 'bg-white/15 text-zinc-50' : 'text-zinc-400 hover:text-zinc-200')
   return (
-    <Modal onClose={onClose} size="max-w-3xl">
-      {(close) => (
-        <>
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-5 py-3.5">
-            <div className="flex items-center gap-2.5"><span style={{ color: ACCENT }}><AgentSpark /></span><span className="text-[13px] font-semibold text-zinc-50">Hand this to an agent</span></div>
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-0.5 rounded-lg bg-white/[0.08] p-0.5"><button onClick={() => setRaw(false)} className={seg(!raw)}>Pretty</button><button onClick={() => setRaw(true)} className={seg(raw)}>Raw</button></span>
-              <button onClick={close} className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-white/10 hover:text-zinc-200"><Icon name="x" size={16} /></button>
-            </div>
-          </div>
-          <div className="border-b border-white/10 px-5 py-3">
-            <div className="text-[12.5px] text-zinc-400">Generated live with this machine's URL. Paste this into a fresh session:</div>
-            <div className="mt-2"><CopyLine text={prompt} /></div>
-          </div>
-          <div className="flex-1 overflow-auto px-6 py-5">
-            {md == null ? <div className="flex items-center gap-2 text-[13px] text-zinc-400"><Spinner className="size-4" /> loading…</div>
-              : raw ? <pre className="cl-mono whitespace-pre-wrap break-words text-[12px] leading-relaxed text-zinc-300">{md}</pre>
-              : <Markdown src={md} />}
-          </div>
-        </>
-      )}
-    </Modal>
+    <div className="mx-auto max-w-3xl">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition hover:text-zinc-100">← back to the board</button>
+        <span className="flex items-center gap-0.5 rounded-lg bg-white/[0.08] p-0.5"><button onClick={() => setRaw(false)} className={seg(!raw)}>Pretty</button><button onClick={() => setRaw(true)} className={seg(raw)}>Raw</button></span>
+      </div>
+
+      <div className="flex items-center gap-2.5">
+        <span style={{ color: ACCENT }}><AgentSpark /></span>
+        <h1 className="text-[22px] font-semibold tracking-tight text-white">Hand this to an agent</h1>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3.5">
+        <div className="text-[12.5px] text-zinc-400">Generated live with this machine's URL. Paste this into a fresh Claude Code session:</div>
+        <div className="mt-2.5 flex items-center gap-2.5 rounded-lg bg-black/40 px-3 py-2 ring-1 ring-white/10">
+          <span className="shrink-0 text-zinc-600">$</span>
+          <code className="cl-mono min-w-0 flex-1 truncate text-[12px] text-zinc-200">{prompt}</code>
+          <CopyBoom value={prompt} title="Copy the agent prompt" />
+        </div>
+      </div>
+
+      <div className="mt-8">
+        {md == null ? <div className="flex items-center gap-2 text-[13px] text-zinc-400"><Spinner className="size-4" /> loading…</div>
+          : raw ? <pre className="cl-mono whitespace-pre-wrap break-words text-[12px] leading-relaxed text-zinc-300">{md}</pre>
+          : <Markdown src={md} />}
+      </div>
+
+      <div className="mt-12"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
+    </div>
   )
 }
 
 /* ─────────── dashboard helpers: quick account search + recent access ──────── */
-// Lazy account search — only hits /broker/reachable (which unlocks the vault) on
-// first focus, so simply viewing the board never forces an unlock.
+// Lazy account search — hits /broker/reachable (the non-secret cache, no unlock) on first
+// focus. Search reads the cache, so it's instant and never warms the vault.
 function QuickSearch({ navigate }) {
   const [q, setQ] = useState('')
   const [items, setItems] = useState(null)
@@ -567,7 +579,7 @@ function QuickSearch({ navigate }) {
       {q && (
         <div className="absolute inset-x-0 top-full z-20 mt-1.5 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl">
           {loading && !items ? (
-            <div className="px-3 py-3 text-[12px] text-zinc-500">unlocking the vault…</div>
+            <div className="px-3 py-3 text-[12px] text-zinc-500">searching…</div>
           ) : matches.length === 0 ? (
             <div className="px-3 py-3 text-[12px] text-zinc-500">no accounts match “{q}”.</div>
           ) : (
@@ -599,8 +611,8 @@ function ago(ts) {
 }
 const exactTs = (ts) => (ts || '').replace('T', ' ').replace(/\.\d+/, '').replace('Z', ' UTC')
 
-// one rich access-log row (dashboard preview) — event · account · 2FA · tier ·
-// result on line 1; username · website · time on line 2; session codename right.
+// one rich access-log row (dashboard preview) — event · account · username · 2FA ·
+// website · tier · result all on ONE line; time · session codename on the right.
 function AuditRow({ e }) {
   const account = e.item || e.cred
   const website = e.host || (e.hosts && e.hosts[0])
@@ -613,19 +625,20 @@ function AuditRow({ e }) {
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className="font-medium text-zinc-200">{EVENT_LABEL[e.event] || e.event}</span>
           {account && <span className="font-semibold text-zinc-50">{account}</span>}
+          {e.username && <span className="font-mono text-[11px] text-zinc-400">{e.username}</span>}
           {e.hasTotp && <Badge color="cyan">2FA</Badge>}
+          {website && <span className="font-mono text-[11px] text-zinc-400">on {website}</span>}
           {e.tier && <TierPill tier={e.tier} />}
           {e.result === 'denied' && <span className="text-rose-400">· {e.reason}</span>}
           {(e.changes || []).map((c, j) => <span key={j} className="inline-flex items-center gap-1"><span className="text-zinc-300">{c.name}</span><span className="text-zinc-500">{c.from} →</span><span className={cn('font-medium', TIER_INK[c.to] || 'text-zinc-400')}>{c.to}</span></span>)}
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-zinc-500">
-          {e.username && <span className="font-mono text-zinc-400">{e.username}</span>}
-          {website && <><span className="text-zinc-700">·</span><span className="font-mono text-zinc-400">{website}</span></>}
-          {(e.username || website) && <span className="text-zinc-700">·</span>}
-          <span title={exactTs(e.ts)} className="whitespace-nowrap">{ago(e.ts)}</span>
-        </div>
       </div>
-      <span className="mt-0.5 inline-flex shrink-0 items-center gap-1" title={e.session}><span aria-hidden="true" className="text-[11px]">{cn2.emoji}</span><span className="font-mono text-[10.5px] font-semibold" style={{ color: cn2.hex }}>{cn2.callsign}</span></span>
+      <div className="mt-0.5 flex shrink-0 items-center gap-2">
+        <span title={exactTs(e.ts)} className="whitespace-nowrap text-[11px] text-zinc-500">{ago(e.ts)}</span>
+        {e.session === 'ui'
+          ? <span className="font-mono text-[10.5px] text-zinc-600" title="done from this dashboard">system</span>
+          : <span className="inline-flex items-center gap-1" title={e.session}><span aria-hidden="true" className="text-[11px]">{cn2.emoji}</span><span className="font-mono text-[10.5px] font-semibold" style={{ color: cn2.hex }}>{cn2.callsign}</span></span>}
+      </div>
     </div>
   )
 }
@@ -663,6 +676,9 @@ export function AuthPanel({ self, navigate }) {
     let busy = false
     const load = async () => { if (busy) return; busy = true; try { const r = await fetch(API + '/broker/status', { signal: AbortSignal.timeout(10000) }); if (r.ok) setBw(await r.json()) } catch { setBw((b) => b || { installed: false }) } finally { busy = false } }
     load()
+    // Opening the board warms/slides the vault so hints are ready for agents: a silent slide when
+    // already warm (2h idle), a Touch-ID unlock when it has gone cold. Once per mount, not on the poll.
+    postJSON('/broker/refresh').then(() => load()).catch(() => {})
     const unsub = self.subscribe((f) => { if (f.type === 'broker-status' && f.status) setBw(f.status) })
     const t = setInterval(() => { if (!document.hidden) load() }, 45000)
     return () => { unsub && unsub(); clearInterval(t) }
@@ -695,6 +711,9 @@ export function AuthPanel({ self, navigate }) {
     : ready ? { dot: 'lime', text: 'connected — agents can sign in' }
     : { dot: 'amber', text: 'reconnect needed — agents can’t read the vault' }
 
+  const skillUrl = (typeof window !== 'undefined' ? window.location.origin : '') + API + '/skill.md'
+  const agentPrompt = `I'm giving you a skill — read it and use it: ${skillUrl}`
+
   const Stat = ({ value, label, tone }) => (
     <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
       <div className={cn('text-[18px] font-semibold tabular-nums', tone || 'text-zinc-50')}>{value}</div>
@@ -712,22 +731,38 @@ export function AuthPanel({ self, navigate }) {
             {bw?.policyOk === false && <Badge color="red">policy tampered</Badge>}
           </div>
           <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-zinc-400">Agents sign into any site without ever seeing the password — a signed local daemon types it over CDP, gated by the Bitwarden collection, the tab’s origin, and a macOS approval.</p>
-          <div className="mt-2 inline-flex items-center gap-2 text-[12.5px] text-zinc-300"><StatusDot color={line.dot} />{line.text}</div>
+          {/* only surface the status line when there's something to act on — a
+              fully-connected broker needs no "connected" restatement (the badge +
+              connection panel already say so) */}
+          {(!ready || nothingGranted) && <div className="mt-2 inline-flex items-center gap-2 text-[12.5px] text-zinc-300"><StatusDot color={line.dot} />{line.text}</div>}
         </div>
-        <button onClick={() => navigate('credentials')} className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>
-          {setup ? 'Set up the broker' : 'Broker settings'} <span>→</span>
-        </button>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {ready && (
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 px-3.5 py-2 text-[12.5px] font-semibold text-zinc-200">
+              <button onClick={() => navigate('skill')} className="inline-flex items-center gap-1.5 transition hover:text-white"><span style={{ color: ACCENT }}><AgentSpark /></span>hand to an agent</button>
+              <span className="text-zinc-600">·</span>
+              <CopyBoom value={agentPrompt} title="Copy the agent prompt" />
+            </span>
+          )}
+          <button onClick={() => navigate('credentials')} className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>
+            {setup ? 'Set up the broker' : 'Broker settings'} <span>→</span>
+          </button>
+        </div>
       </div>
 
       {bw && bw.installed && (
-        <div className="mt-5 grid gap-4 lg:grid-cols-2">
-          {/* connection */}
-          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-            <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Connection</div>
-            <BrokerStatus status={bw} />
+        <>
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            {/* connection */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Connection</div>
+              <BrokerStatus status={bw} />
+            </div>
+            {/* agent integration — setup health, next to the connection */}
+            <AgentIntegration navigate={navigate} />
           </div>
-          {/* access */}
-          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+          {/* access — full width below */}
+          <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
             <div className="mb-2 flex items-center justify-between gap-3">
               <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Access</span>
               {ready && !nothingGranted && <button onClick={() => navigate('accounts')} className="text-[12px] text-zinc-400 transition hover:text-zinc-100">all accounts →</button>}
@@ -746,7 +781,7 @@ export function AuthPanel({ self, navigate }) {
               <div className="py-3 text-[12.5px] text-zinc-400">{nothingGranted ? <>Nothing granted yet — grant a collection in <button onClick={() => navigate('credentials')} className="underline underline-offset-2 hover:text-zinc-200">Settings</button> to let agents in.</> : 'connect the vault to grant access.'}</div>
             )}
           </div>
-        </div>
+        </>
       )}
 
       {ready && <RecentAccess self={self} navigate={navigate} />}
@@ -765,14 +800,11 @@ export function Settings({ self, navigate }) {
   const [loadingGroups, setLoadingGroups] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState(null)
-  const [cred, setCred] = useState(null)
-  const [skill, setSkill] = useState(false)
 
   const loadStatus = useCallback(async () => { try { setStatus(await fetch(API + '/broker/status').then((r) => r.json())) } catch {} }, [])
   const loadPolicy = useCallback(async () => { try { const r = await fetch(API + '/broker/policy').then((x) => x.json()); if (r.ok) setPolicy(r.policy) } catch {} }, [])
   const loadCachedGroups = useCallback(async () => { try { const r = await fetch(API + '/broker/groups').then((x) => x.json()); if (r.ok && !r.needsScan) setGroups(r.groups || []) } catch {} }, [])
-  const loadCred = useCallback(() => fetch(API + '/state').then((r) => r.json()).then(setCred).catch(() => {}), [])
-  useEffect(() => { loadStatus(); loadPolicy(); loadCachedGroups(); loadCred() }, [loadStatus, loadPolicy, loadCachedGroups, loadCred])
+  useEffect(() => { loadStatus(); loadPolicy(); loadCachedGroups() }, [loadStatus, loadPolicy, loadCachedGroups])
   useEffect(() => {
     const unsub = self.subscribe((f) => { if (f.type === 'broker-status' && f.status) setStatus(f.status) })
     const t = setInterval(() => { if (!document.hidden) loadStatus() }, 45000)
@@ -781,7 +813,9 @@ export function Settings({ self, navigate }) {
 
   const loadGroups = async () => { setLoadingGroups(true); try { const r = await postJSON('/broker/refresh'); if (r.ok) setGroups(r.groups || []) } finally { setLoadingGroups(false) } }
   const save = async (body) => { setSaving(true); setSaveMsg(null); try { const r = await postJSON('/broker/policy', body); if (r.ok) { setPolicy(r.policy); setSaveMsg({ ok: true, text: 'saved' }) } else setSaveMsg({ ok: false, text: r.error || r.reason || 'failed' }) } finally { setSaving(false); setTimeout(() => setSaveMsg(null), 4000) } }
-  const lock = async () => { await postJSON('/broker/lock'); loadStatus() }
+  // Soft lock: drop the warm session but keep the token — re-warms silently on next use, no
+  // reconnect. (The hard path — forget the token entirely — is Disconnect below.)
+  const lock = async () => { await postJSON('/broker/lock-soft'); loadStatus() }
   const rebuild = async () => { setStatus((s) => ({ ...(s || {}), building: true })); await postJSON('/broker/rebuild'); loadStatus() }
 
   const v = status?.vault
@@ -813,9 +847,8 @@ export function Settings({ self, navigate }) {
               <div className="flex flex-wrap items-center gap-2"><h1 className="text-[22px] font-semibold tracking-tight text-white">Broker settings</h1>{badge}<Badge color="violet">enforced</Badge></div>
               <div className="font-mono text-[12px] text-zinc-500">{subtitle}</div>
             </div>
-            <button onClick={() => setSkill(true)} className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full border border-white/15 px-3 py-1.5 text-[12px] font-semibold text-zinc-200 transition hover:border-white/30 hover:text-white"><span style={{ color: ACCENT }}><AgentSpark /></span>hand to an agent</button>
           </div>
-          <p className="mt-3 max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">A signed local daemon is the only holder of the Bitwarden session. Agents ask it for an action — <Code>hb_type_secret</Code> / <Code>hb_type_totp</Code> — typed over the broker's own browser session, gated by the collection's access level, an origin check, and a macOS approval. The secret never enters agent code.</p>
+          <p className="mt-3 max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">A signed local daemon is the only holder of the Bitwarden session. Agents ask it for an action — <Code>type_secret</Code> / <Code>type_totp</Code> — typed over the broker's own browser session, gated by the collection's access level, an origin check, and a macOS approval. The secret never enters agent code.</p>
           <p className="mt-3 max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">Grant agents a Bitwarden <Strong>collection</Strong> (or folder), not individual logins — every item inside inherits the tier, and moving a password in or out of the collection is how you change its access. <Strong>auto</Strong> = silent; <Strong>ask</Strong> = macOS approval each use. <Strong>Only granted collections are reachable</Strong> — every other item in your vault is a hard deny, not even enumerable, so your personal logins are never silently available.</p>
           <PromptsCallout />
           <div className="mt-4 max-w-2xl empty:hidden"><ConnectBox status={status} setupCmd={status?.setupCmd} cli={status?.cli} /></div>
@@ -825,7 +858,7 @@ export function Settings({ self, navigate }) {
           <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Connection</div>
           <div className="mt-2.5"><BrokerStatus status={status} /></div>
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <button onClick={lock} className="text-[12px] text-zinc-400 underline underline-offset-2 transition hover:text-zinc-100">lock vault now</button>
+            <button onClick={lock} title="Drops the unlocked session but keeps the token — re-warms silently on next use, no reconnect." className="text-[12px] text-zinc-400 underline underline-offset-2 transition hover:text-zinc-100">lock vault</button>
             <span className="text-zinc-600">·</span>
             <button onClick={rebuild} className="text-[12px] text-zinc-400 underline underline-offset-2 transition hover:text-zinc-100">rebuild daemon</button>
             {bwReady && <><span className="text-zinc-600">·</span><DisconnectLink name="Bitwarden" endpoint="/broker/disconnect" warn="Forgets the session token, drops the vault session, clears grants + log. The daemon stays installed." lock onDone={() => { loadStatus(); loadPolicy() }} /></>}
@@ -842,15 +875,7 @@ export function Settings({ self, navigate }) {
 
       <div className="mt-8"><GroupPicker policy={policy} groups={groups} onLoadGroups={loadGroups} loadingGroups={loadingGroups} onSave={save} saving={saving} saveMsg={saveMsg} /></div>
 
-      {/* advanced — the agent helpers + hint hook */}
-      <div className="mt-14 space-y-10 border-t border-white/10 pt-10">
-        <HelperSection helper={cred?.helper} reload={loadCred} />
-        <HintsSection />
-      </div>
-
       <div className="mt-14"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
-
-      {skill && <SkillModal onClose={() => setSkill(false)} />}
     </>
   )
 }

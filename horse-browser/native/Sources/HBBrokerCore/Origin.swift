@@ -21,12 +21,62 @@ public func hostsOf(_ uris: [String]) -> [String] {
   }.filter { !$0.isEmpty }
 }
 
-// A tab host matches a bound host if equal or a subdomain of it (suffix on a label
-// boundary). "www.github.com" matches bound "github.com"; "evilgithub.com" does not.
+// Multi-part TLD registries — second-level suffixes (co.uk, com.au, co.jp…) where the registrable
+// NAME is the third label, so foo.co.uk and bar.co.uk are different owners and must not cross-match.
+// This is the ONLY special-casing. Under a normal domain we deliberately DON'T distinguish
+// subdomains: a login on one subdomain covers its siblings (the agent may open the right site on
+// the wrong subdomain — a wanted convenience). Multi-tenant hosting (github.io, *.web.app,
+// *.myshopify.com) is NOT listed here by choice, so its siblings match too. Extend ONLY with real
+// ccTLD second-level registries (https://publicsuffix.org, the ICANN ccTLD section).
+let MULTIPART_TLDS: Set<String> = [
+  "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "sch.uk", "ac.uk", "gov.uk",
+  "com.au", "net.au", "org.au", "edu.au", "gov.au", "id.au",
+  "co.jp", "ne.jp", "or.jp", "go.jp", "ac.jp", "ad.jp", "ed.jp", "gr.jp", "lg.jp",
+  "co.nz", "net.nz", "org.nz", "govt.nz", "ac.nz",
+  "com.br", "net.br", "org.br", "gov.br",
+  "co.in", "net.in", "org.in", "gen.in", "firm.in", "ind.in",
+  "com.cn", "net.cn", "org.cn", "gov.cn",
+  "co.za", "org.za", "com.mx", "com.ar", "com.sg", "com.hk", "com.tw",
+  "com.tr", "org.tr", "net.tr", "co.kr", "or.kr", "co.il", "co.id",
+  "com.my", "com.ph", "com.vn", "com.ua", "com.pl", "com.ng",
+]
+
+// The registrable domain (eTLD+1): the site owner's boundary. mail.google.com and
+// accounts.google.com both → google.com; a.foo.co.uk → foo.co.uk; a bare ccTLD suffix (co.uk) or an
+// IP → nil (no owner boundary, so only exact/subdomain matching applies). A normal multi-label
+// suffix (github.io) is treated as a plain domain ON PURPOSE, so its subdomains share one
+// registrable domain and cross-match — only the MULTIPART_TLDS registries are split at the 3rd label.
+public func registrableDomain(_ host: String) -> String? {
+  let labels = host.lowercased().split(separator: ".").map(String.init)
+  guard labels.count >= 2 else { return nil }
+  if labels.allSatisfy({ Int($0) != nil }) { return nil }   // IPv4 → exact match only, never siblings
+  let last2 = labels.suffix(2).joined(separator: ".")
+  if MULTIPART_TLDS.contains(last2) {
+    return labels.count >= 3 ? labels.suffix(3).joined(separator: ".") : nil
+  }
+  return last2
+}
+
+// A tab host matches a bound host when either:
+//   (1) equal, or the tab is a subdomain of the bound host (suffix on a label boundary) — the
+//       original, public-suffix-independent trust. "www.github.com" matches bound "github.com".
+//   (2) both resolve to the SAME registrable domain — so a login stored on one subdomain covers
+//       its siblings (accounts.google.com ↔ mail.google.com; and, by design, alice.github.io ↔
+//       bob.github.io). Only multi-part ccTLD registries split owners (foo.co.uk ↮ bar.co.uk).
+// "www." is apex-equivalent (a vault item stores whichever URL the login page used, so tab and
+// bound can differ only by a leading www.) — normalised off BOTH sides. Look-alikes (evilgithub.com,
+// github.com.evil.com) share neither a suffix boundary nor a registrable domain, so stay rejected.
 public func hostMatches(_ tabHost: String, bound: [String]) -> Bool {
+  func apex(_ h: String) -> String {
+    let l = h.lowercased()
+    return l.hasPrefix("www.") ? String(l.dropFirst(4)) : l
+  }
+  let t = apex(tabHost)
+  let tReg = registrableDomain(t)
   for b in bound {
-    let bl = b.lowercased()
-    if tabHost == bl || tabHost.hasSuffix("." + bl) { return true }
+    let bl = apex(b)
+    if t == bl || t.hasSuffix("." + bl) { return true }
+    if let tReg, tReg == registrableDomain(bl) { return true }
   }
   return false
 }

@@ -333,6 +333,68 @@ export function Modal({ onClose, size = 'max-w-2xl', closeOnEsc = true, children
   )
 }
 
+// Animated copy button — a celebratory "boom" on success: a checkmark draws in
+// while particles, rings and sparks burst outward. The exact same element the
+// sites module uses (uiverse.io neon checkbox, agent-violet #7c5cff). Keyframes
+// injected once. Pass `value` (string or () => string) and an optional `title`.
+const CB_PARTICLES = [[26, -22], [-26, -22], [24, 24], [-24, 24], [34, 2], [-34, 2], [2, 34], [-2, -34], [18, -30], [-18, 30], [30, 18], [-30, -18]]
+const CB_RING_DELAYS = ['0s', '.08s', '.16s']
+const CB_SPARKS = [0, 90, 180, 270]
+const CB_CSS = `
+.hb-cb__copy,.hb-cb__check{position:absolute;inset:0;width:100%;height:100%}
+.hb-cb__copy{transition:opacity .18s ease,transform .18s ease}
+.hb-cb__check{fill:none;stroke:#7c5cff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:26;stroke-dashoffset:26;opacity:0;transform:scale(.5)}
+.hb-cb.is-boom .hb-cb__copy{opacity:0;transform:scale(.4)}
+.hb-cb.is-boom .hb-cb__check{opacity:1;transform:scale(1);stroke-dashoffset:0;transition:stroke-dashoffset .45s cubic-bezier(.16,1,.3,1) .06s,opacity .12s ease,transform .3s cubic-bezier(.16,1,.3,1)}
+.hb-cb__fx{position:absolute;top:50%;left:50%;width:0;height:0;pointer-events:none}
+.hb-cb__particles span,.hb-cb__rings span,.hb-cb__sparks span{position:absolute;top:0;left:0;opacity:0}
+.hb-cb__particles span{width:5px;height:5px;margin:-2.5px;border-radius:50%;background:#7c5cff;box-shadow:0 0 7px #7c5cff}
+.hb-cb.is-boom .hb-cb__particles span{animation:hbCbParticle .62s cubic-bezier(.16,1,.3,1) forwards}
+.hb-cb__rings span{width:14px;height:14px;margin:-7px;border-radius:50%;border:1.5px solid #7c5cff}
+.hb-cb.is-boom .hb-cb__rings span{animation:hbCbRing .6s ease-out var(--d,0s) forwards}
+.hb-cb__sparks span{width:12px;height:1.5px;margin-top:-.75px;border-radius:1px;background:linear-gradient(90deg,#7c5cff,transparent);transform-origin:left center}
+.hb-cb.is-boom .hb-cb__sparks span{animation:hbCbSpark .5s ease-out forwards}
+@keyframes hbCbParticle{0%{transform:translate(0,0) scale(1);opacity:1}75%{opacity:1}100%{transform:translate(var(--x),var(--y)) scale(.6);opacity:0}}
+@keyframes hbCbRing{0%{transform:scale(.2);opacity:.7}100%{transform:scale(2.6);opacity:0}}
+@keyframes hbCbSpark{0%{transform:rotate(var(--r)) translateX(3px) scaleX(.7);opacity:1}100%{transform:rotate(var(--r)) translateX(20px) scaleX(0);opacity:0}}
+@media(prefers-reduced-motion:reduce){.hb-cb__particles span,.hb-cb__rings span,.hb-cb__sparks span{animation:none!important}}
+`
+export function CopyBoom({ value, title = 'Copy', className }) {
+  const [boom, setBoom] = useState(false)
+  useEffect(() => {
+    if (document.getElementById('hb-boom-kf')) return
+    const el = document.createElement('style')
+    el.id = 'hb-boom-kf'
+    el.textContent = CB_CSS
+    document.head.appendChild(el)
+  }, [])
+  const onCopy = async (e) => {
+    e.preventDefault(); e.stopPropagation()
+    const v = typeof value === 'function' ? value() : value
+    try { if (!navigator.clipboard) return; await navigator.clipboard.writeText(v) } catch { return }
+    setBoom(false)
+    requestAnimationFrame(() => requestAnimationFrame(() => setBoom(true)))
+    setTimeout(() => setBoom(false), 1500)
+  }
+  return (
+    <button type="button" onClick={onCopy} aria-label={title} title={boom ? 'Copied!' : title}
+      className={cn('hb-cb relative inline-flex size-[15px] shrink-0 items-center justify-center align-[-3px] text-zinc-400 transition-colors hover:text-zinc-200', boom && 'is-boom', className)}>
+      <svg className="hb-cb__copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="9" y="9" width="11" height="11" rx="2" />
+        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+      </svg>
+      <svg className="hb-cb__check" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 12.5l4.5 4.5L19 7" />
+      </svg>
+      <span className="hb-cb__fx" aria-hidden="true">
+        <span className="hb-cb__particles">{CB_PARTICLES.map(([x, y], i) => <span key={i} style={{ '--x': `${x}px`, '--y': `${y}px` }} />)}</span>
+        <span className="hb-cb__rings">{CB_RING_DELAYS.map((d, i) => <span key={i} style={{ '--d': d }} />)}</span>
+        <span className="hb-cb__sparks">{CB_SPARKS.map((r, i) => <span key={i} style={{ '--r': `${r}deg` }} />)}</span>
+      </span>
+    </button>
+  )
+}
+
 // A live streaming console — dark code-window for action WS logs.
 export function ActionConsole({ entry, title = 'output', onClose }) {
   const ref = useRef(null)

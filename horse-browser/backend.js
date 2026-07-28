@@ -77,7 +77,7 @@ function findOnPath(name) {
 }
 
 async function cdpInfo() {
-  const out = { up: false, browser: null, protocol: null, tabs: 0, tabSample: [], pids: [] }
+  const out = { up: false, browser: null, protocol: null, port: Number(process.env.HB_CDP_PORT || 9223), tabs: 0, tabSample: [], pids: [] }
   try {
     const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(1500) })
     if (r.ok) {
@@ -443,6 +443,31 @@ function classifyDocSource(realAbs) {
   return null
 }
 
+// Parse public top-level `def name(...):` + the first line of its docstring — powers the verb
+// popups on the docs page, so a verb's description comes from its OWN code, not a hardcoded map.
+function verbDocs(body) {
+  const lines = body.split('\n')
+  const out = {}
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^def\s+([A-Za-z]\w*)\s*\(/.exec(lines[i])
+    if (!m || m[1].startsWith('_')) continue
+    let j = i
+    while (j < lines.length && !/:\s*$/.test(lines[j].replace(/#.*$/, ''))) j++   // end of signature
+    let k = j + 1
+    while (k < lines.length && lines[k].trim() === '') k++
+    const open = /^\s*[rubfRUBF]{0,2}("""|''')/.exec(lines[k] || '')
+    if (!open) continue
+    const q = open[1]
+    const rest = lines[k].slice(lines[k].indexOf(q) + 3)
+    const end = rest.indexOf(q)
+    let first = end >= 0 ? rest.slice(0, end) : rest
+    let kk = k
+    while (!first.trim() && kk + 1 < lines.length && !lines[kk].includes(q)) { kk++; if (lines[kk].includes(q)) break; first = lines[kk] }
+    first = first.replace(/\s+/g, ' ').trim()
+    if (first) out[m[1]] = first.length > 180 ? first.slice(0, 179) + '…' : first
+  }
+  return out
+}
 function agentDocs() {
   const short = (p) => p.replace(HOME, '~')
   const out = { blockPresent: false, blockPath: short(HB_RULES_MD), blockTitle: null, maintainer: null, docs: [] }
@@ -462,6 +487,7 @@ function agentDocs() {
       const t = /^#\s+(.+?)\s*$/m.exec(body)
       d.title = t ? t[1] : path.basename(p)
       d.headings = [...body.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => m[1]).slice(0, 14)
+      if (/\.py$/.test(p)) d.verbs = verbDocs(body)   // {name: first-docstring-line} for the popups
     } catch {}
     return d
   }
@@ -469,9 +495,83 @@ function agentDocs() {
   out.blockPresent = rule.exists
   out.blockTitle = rule.title
   out.docs = [rule]
+  // the atelier module's always-on credential rule — module-written, so it has no npm
+  // source, but it IS in ~/.claude/rules and loads every session, so list it beside the rule
+  const authRuleMd = path.join(HOME, '.claude', 'rules', 'horse-browser-auth.md')
+  out.docs.push(read(authRuleMd, { import: short(authRuleMd), kind: 'auth-rule' }))
   const root = hbPackageRoot()
   if (root) out.docs.push(read(path.join(root, 'MANUAL.md'), { import: 'horse-browser skill', kind: 'manual' }))
+  // the verb source files, so the docs page can Read each one (whitelisted here → /agent-doc serves
+  // them): core (helpers/input) + every plugin under plugins/ + the operator's own agent_helpers.py
+  const wsDir = path.join(HOME, '.config', 'browser-harness', 'agent-workspace')
+  const hh = root ? path.join(root, 'harness', 'horse_harness') : null
+  let plugins = []
+  try { plugins = fs.readdirSync(path.join(wsDir, 'plugins')).filter((f) => f.endsWith('.py')).sort().map((f) => path.join(wsDir, 'plugins', f)) } catch {}
+  for (const vf of [hh && path.join(hh, 'helpers.py'), hh && path.join(hh, 'input.py'), ...plugins, path.join(wsDir, 'agent_helpers.py')].filter(Boolean)) {
+    out.docs.push(read(vf, { import: short(vf), kind: 'verb-file' }))
+  }
   return out
+}
+
+// Site skills — per-host playbooks the agent reads on navigation: domain-skills/<domain.tld>/*.md
+// in the agent workspace (the harness surfaces one when the tab's host matches). Pure fs + cheap, so
+// the summary (counts + hosts) rides the snapshot poll; the full tree with content is its own route.
+const SKILLS_DIR = path.join(HOME, '.config', 'browser-harness', 'agent-workspace', 'domain-skills')
+function siteSkillHosts() {
+  const hosts = []
+  let dirs = []
+  try { dirs = fs.readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() } catch {}
+  for (const host of dirs) {
+    let files = []
+    try { files = fs.readdirSync(path.join(SKILLS_DIR, host)).filter((f) => f.endsWith('.md')).sort() } catch { continue }
+    if (files.length) hosts.push({ host, files })
+  }
+  return hosts
+}
+function siteSkillsSummary() {
+  const hosts = siteSkillHosts()
+  return { dir: SKILLS_DIR.replace(HOME, '~'), hostCount: hosts.length,
+    fileCount: hosts.reduce((n, h) => n + h.files.length, 0),
+    hosts: hosts.map((h) => ({ host: h.host, count: h.files.length })) }
+}
+function siteSkillsTree() {
+  const out = []
+  for (const { host, files } of siteSkillHosts()) {
+    const skills = files.map((name) => {
+      const abs = path.join(SKILLS_DIR, host, name)
+      let body = '', bytes = 0, title = name
+      try {
+        body = fs.readFileSync(abs, 'utf8'); bytes = Buffer.byteLength(body)
+        const t = /^#\s+(.+?)\s*$/m.exec(body); if (t) title = t[1]
+      } catch {}
+      if (body.length > 65536) body = body.slice(0, 65536) + '\n\n… (truncated)'
+      return { name, path: abs.replace(HOME, '~'), bytes, title, body }
+    })
+    out.push({ host, skills })
+  }
+  return { dir: SKILLS_DIR.replace(HOME, '~'), hosts: out }
+}
+
+// The authoritative verb list, by tier — from `horse-browser verbs --json` (harness introspection,
+// not a hardcoded map). Powers the docs page's three tiers. ~1-2s (harness import), so it's cached
+// and fetched by its own route, off the snapshot poll.
+let _verbsCache = null
+async function harnessVerbs() {
+  if (_verbsCache && Date.now() - _verbsCache.at < 15000) return _verbsCache.rows
+  let rows = []
+  try {
+    const { stdout } = await execFileP('horse-browser', ['verbs', '--json'], { timeout: 12000 })
+    const parsed = JSON.parse(stdout)
+    if (Array.isArray(parsed)) {
+      const root = hbPackageRoot()
+      rows = parsed.map((r) => ({    // shorten source paths for display: package → <pkg>, home → ~
+        ...r,
+        file: root && r.file && r.file.startsWith(root) ? '<pkg>' + r.file.slice(root.length) : (r.file || '').replace(HOME, '~'),
+      }))
+    }
+  } catch {}
+  _verbsCache = { at: Date.now(), rows }
+  return rows
 }
 
 async function snapshot() {
@@ -489,6 +589,7 @@ async function snapshot() {
     harness,
     versions: await softwareVersions(),
     agentDocs: agentDocs(),
+    siteSkills: siteSkillsSummary(),
   }
 }
 
@@ -561,6 +662,12 @@ export default {
       catch { res.json({ error: 'unreadable' }, 500) }
     })
 
+    // every loaded verb by tier (core / plugin:<file> / local), introspected from the harness
+    router.get('/verbs', async (req, res) => res.json(await harnessVerbs()))
+
+    // per-host site skills (domain-skills/<host>/*.md) — the full tree with content, for the explorer page
+    router.get('/site-skills', (req, res) => res.json(siteSkillsTree()))
+
     // the live stack: agent sessions → horse-harness daemons → chrome tabs, with a status check per column
     const cachedLatest = async (key, fn, ttl = 20 * 60 * 1000) => {
       const c = slot.verCache[key]
@@ -631,8 +738,10 @@ export default {
     // Runs on page open and on the Recheck button — not on the snapshot poll
     // (each check is a real capture; on a broken box it costs the full timeout).
     router.get('/compositing', async (req, res) => {
-      const [display, probe] = await Promise.all([displayInfo(), paintProbe()])
-      res.json({ now: Date.now(), display, probe })
+      // deskpadInfo() carries the same display census (one CoreGraphics call) plus the
+      // virtual-display install/run state, so "works now" can also say "lid-proof?".
+      const [dp, probe] = await Promise.all([deskpadInfo(), paintProbe()])
+      res.json({ now: Date.now(), display: dp.display, probe, deskpad: { installed: dp.installed, running: dp.running } })
     })
 
     // heal.log — the launcher's incident journal; fetch once, then the dir

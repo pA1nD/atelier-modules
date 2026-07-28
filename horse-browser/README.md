@@ -18,19 +18,24 @@ click into a subpage.
      full story →"** bottom-left; the **install & version box** (horse-browser
      vN · up to date / Update · the npm command) floated top-right as a distinct
      dark card, kept separate from the live-status panels.
-  2. **Live status** — three *clickable* glance tiles: **The browser** and
-     **Driving now** open the live stack (`runtime`), **What agents know** opens
-     the docs. Each carries a one-line "what's behind the click".
-  3. **Credentials & access** — the whole auth system, live: the broker header,
-     a **Connection** panel (daemon · CLI · account · server · session token ·
-     vault) and an **Access** panel (accounts reachable · collections · auto ·
-     ask — from cached group metadata, no vault unlock — plus a **quick account
-     search** that lazily unlocks only on focus), then a **Recent access** log
-     preview. Links out to Settings / all accounts / the full log.
+  2. **Live status** — three *clickable* cards: **The browser** (Chrome ·
+     port · sessions · a screenshot-health probe, → `runtime`), **Wired up**
+     (is the always-on rule installed and current, → `docs`), and **Site
+     skills** (per-host playbook count, → `site-skills`).
+  3. **Credentials & access** — the whole auth system, live: the broker header
+     with **"hand to an agent"** (+ copy button), a **Connection** panel
+     (daemon · CLI · account · server · session token · vault), an **Agent
+     integration** panel (plugin · hint hook · safety rule), and an **Access**
+     panel (accounts reachable · collections · auto · ask — from cached group
+     metadata, no vault unlock — plus a **quick account search**), then a
+     **Recent access** log preview. Links out to Settings / all accounts / the
+     full log.
 - **`credentials` — broker settings** (folded in from hb-auth, dark-restyled):
   connection management (lock / rebuild / disconnect / setup), the
-  grant-by-collection table, and (advanced) the agent helpers + hint-hook. The
+  grant-by-collection table, and an agent-integration reference page. The
   reachable list and access log are their own pages now.
+- **`skill` — "hand this to an agent":** the login skill as a page, with the
+  copyable one-line prompt and a pretty/raw render of `/skill.md`.
 - **`accounts` — reachable accounts:** the full list an agent can enumerate
   (name · username · host · tier · 2FA), filterable.
 - **`activity` — the access log:** every credential request, allowed or denied,
@@ -41,8 +46,16 @@ click into a subpage.
   here with agent vision, not in the marketing story), the process wall (agent
   sessions · harness daemons · tabs, callsign-matched via the tab-grouper
   extension), and the launcher's `heal.log` journal, pushed on change.
-- **`docs` — how agents learn it:** the always-on rule + on-demand manual, each
-  opening in a reading modal (pretty / raw).
+- **`docs` — how agents learn it:** the always-on rule (+ the broker's safety
+  rule) and the on-demand manual in reading modals (pretty / raw), plus the
+  **live verb reference** — every loaded verb introspected from
+  `horse-browser verbs --json`, grouped into its three tiers (core →
+  plugins → the operator's own `agent_helpers.py`, last wins), each verb with
+  a docstring popup and a Read of its source file.
+- **`site-skills` — per-site playbooks:** an explorer over
+  `~/.config/browser-harness/agent-workspace/domain-skills/<domain.tld>/*.md`
+  — the quirks/selectors/login-trap notes agents read on arrival, expandable
+  to full content.
 - **`story` — the full narrative:** cinematic banner → idea → the demo
   agent-browser wall → the engine (horse-harness, vendored since v0.9, the
   bitter lesson).
@@ -63,7 +76,9 @@ Pure Node builtins, no deps.
 
 - `GET /snapshot` — the CDP on :9223 (version · tabs · pid), harness daemons + venv readiness, DeskPad + display census (asleep / clamshell / virtual via CoreGraphics ctypes + ioreg), tool presence, versions.
 - `GET /processes` — the live stack: sessions (codenames + cwd), daemons (HORSE_SESSION → callsign; pre-0.9 `browser_harness.daemon` leftovers flagged `legacy`), tabs (→ session via the extension's tab groups).
-- `GET /compositing` — display census + `paintProbe()`, a REAL timed 1×1 `Page.captureScreenshot` (`ok`/`hang`/`no-browser`/`no-page` + ms). On page open + Recheck, never polled.
+- `GET /compositing` — display census + DeskPad install/run state + `paintProbe()`, a REAL timed 1×1 `Page.captureScreenshot` (`ok`/`hang`/`no-browser`/`no-page` + ms). On page open + Recheck, never polled.
+- `GET /verbs` — every loaded verb by tier (core / `plugin:<file>` / local), from `horse-browser verbs --json` (cached ~15s; empty when horse-browser isn't installed).
+- `GET /site-skills` — the full per-host playbook tree (`domain-skills/<host>/*.md`) with content, for the explorer page; a cheap summary rides the snapshot.
 - `GET /heal-log` — the launcher's incident journal (`~/.config/horse-browser/heal.log`), parsed; a dir watcher pushes the tail on change.
 - `GET /images/:name` — bundled imagery (basename-guarded).
 - `POST /action/:id` — streams over the shell WS: `install-horse-browser` (**npm — `@pa1nd/horse-browser`**, install and update are the same command; postinstall builds the vendored harness venv; applies `claude-md.sh` after), `harness-setup` (`horse-browser harness-setup`, rebuilds the venv), `install-browser-config` (`claude-md.sh apply`), `install-deskpad` (brew cask) + `launch-deskpad`. Outward actions refuse without `{ confirm: true }`; children tracked + killed on hot-reload/shutdown.
@@ -74,15 +89,23 @@ The ENFORCED path: a signed local daemon (`native/`, compiled on first run into
 `~/Library/Application Support/hb-broker` — outside the module tree) holds the
 only Bitwarden session and gates every credential by the collection it lives in
 (`auto` | `ask` | `never`) + an origin check read from the browser + a native
-macOS approval. Agents call `hb_type_secret` / `hb_type_totp` — the password is
-typed over the broker's own CDP session, never entering agent code. The daemon
-subsystem is `broker.js` + `native/`; the routes + agent-helper plumbing +
-hint hook are `credentials.js`; the dark UI is `credentials.jsx`. macOS only
-(Keychain, code-signing, launchd, LocalAuthentication). Needs `bw` + Swift.
+macOS approval. Agents call `type_secret` / `type_totp` (plus `creds`,
+`get_secret`, `get_totp` for non-web) — the password is typed over the broker's
+own CDP session, never entering agent code. The old `hb_*` names live on as
+warn-once deprecation shims. The origin check matches on the **registrable
+domain** (`accounts.google.com` covers `mail.google.com`; a ccTLD second-level
+list keeps `foo.co.uk` from matching `bar.co.uk`). Cold discovery is served
+from a 0600 **reachable-cache** (non-secret metadata, "synced X ago" + Sync
+now in the UI) — a fill always re-validates tier + origin live, resolving one
+item by id. "Lock vault" is a **soft lock** (drops warmth, keeps the token —
+re-warms silently); Disconnect is the hard cut. The daemon subsystem is
+`broker.js` + `native/`; the routes + plugin plumbing + hint hook are
+`credentials.js`; the dark UI is `credentials.jsx`. macOS only (Keychain,
+code-signing, launchd, LocalAuthentication). Needs `bw` + Swift.
 
 - `GET /broker/status` · `GET|POST /broker/policy` · `GET /broker/groups` · `POST /broker/refresh` · `GET /broker/reachable` · `GET /broker/audit` · `POST /broker/{lock,rebuild,disconnect}` — the broker control surface (status pushed over the shell WS; audit tailed live).
-- `GET|POST /hints-config` · `GET /hints` · `POST /hints-hook/install` — the credential-hint hook (`~/.config/horse-browser/hints.d/atelier-hb-auth`): on first navigation to a host with a granted credential, it prints the exact `hb_type_secret("<item>")` line.
-- `POST /helpers/install` · `GET|POST /selfheal` · `GET /state` — the managed `atelier_login_helpers.py` (auto-loaded by the harness) + self-heal.
+- `GET|POST /hints-config` · `GET /hints` · `POST /hints-hook/install` — the credential-hint hook (`~/.config/horse-browser/hints.d/atelier-hb-auth`): on first navigation to a host with a granted credential, it prints "🐴 vault login available" with the exact `type_secret("<item>", target)` line.
+- `POST /helpers/install` · `GET|POST /selfheal` · `GET /state` — the broker verbs ship as a **horse-browser plugin**, `<workspace>/plugins/atelier_login.py` (auto-loaded; precedence core < plugins < the operator's own `agent_helpers.py`). Install migrates any old stub out of `agent_helpers.py` and removes the pre-plugin sibling file; self-heal repairs an absent plugin. The always-on safety rule (`~/.claude/rules/horse-browser-auth.md`) is re-asserted on every status read, independent of the auto-repair toggle — only a foreign file (no marker) is left untouched.
 - `GET /skill.md` — the "hand this to an agent" login skill, generated live with this machine's URL.
 
 ## One npm package, harness included

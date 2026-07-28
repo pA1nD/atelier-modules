@@ -1,4 +1,5 @@
-# Swift build output. `npm test` (cd native && swift run OriginCheck) writes
-# native/.build; the daemon build.sh already builds out-of-tree. Never ship it.
+# Swift build output. `npm test` and the daemon build.sh both build out-of-tree,
+# but a manual `swift run` inside native/ writes native/.build. Never ship it —
+# the collection packer force-adds past .gitignore, so it must never exist here.
 .build/
 native/.build/

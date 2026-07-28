@@ -19,7 +19,7 @@
  */
 
 import { Reveal, ChapterIntro, Step, Icon, ActionConsole, Modal, inkFor, cn, useChromeStyles, useSnapshot, useActions } from './lib.jsx'
-import { AuthPanel, Settings, Accounts, Activity } from './credentials.jsx'
+import { AuthPanel, Settings, Accounts, Activity, Skill } from './credentials.jsx'
 
 const { useState, useEffect, useRef } = React
 
@@ -278,21 +278,55 @@ function FakeBrowser({ img }) {
  * browser, who's driving, the installed stack, what agents know. A fix-it
  * button (with its exact command in the open) appears only on a tile that
  * needs one; healthy tiles stay quiet. */
-function Tile({ ok, label, value, sub, more, onClick }) {
-  const clickable = !!onClick
-  const Cmp = clickable ? 'button' : 'div'
+// A live-status card — inverted: the headline data big at the top, the secondary
+// detail small below, and the label + click-through to the detail page pinned to
+// the bottom (mt-auto, so paired cards' footers align). Browser + wiring share it.
+function LiveCard({ dot, label, cta, big, small, onClick }) {
   return (
-    <Cmp onClick={onClick} className={cn('group block w-full rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left', clickable && 'cursor-pointer transition hover:border-white/20 hover:bg-white/[0.05]')}>
-      <div className="flex items-center gap-2">
-        <span className={cn('size-2 shrink-0 rounded-full', ok === true ? 'bg-emerald-400' : ok === false ? 'bg-amber-400' : 'bg-zinc-600')} />
-        <span className="text-[10.5px] font-semibold uppercase tracking-[0.13em] text-zinc-500">{label}</span>
-        {clickable && <span className="ml-auto text-zinc-600 transition group-hover:translate-x-0.5 group-hover:text-zinc-400">→</span>}
+    <button onClick={onClick} className="group flex h-full w-full flex-col gap-2.5 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:border-white/20 hover:bg-white/[0.05]">
+      <div className="text-[15px] leading-snug text-zinc-200">{big}</div>
+      {small && <div className="space-y-1 text-[12px]">{small}</div>}
+      <div className="mt-auto flex items-center gap-2 border-t border-white/[0.06] pt-3">
+        <span className={cn('size-1.5 shrink-0 rounded-full', dot)} />
+        <span className="shrink-0 text-[10.5px] font-semibold uppercase tracking-[0.13em] text-zinc-500">{label}</span>
+        <span className="ml-auto inline-flex min-w-0 items-center gap-1.5 text-[11.5px] text-zinc-500 transition group-hover:text-zinc-300"><span className="truncate">{cta}</span><span className="shrink-0 transition group-hover:translate-x-0.5">→</span></span>
       </div>
-      <div className="mt-2 text-[14.5px] font-semibold text-zinc-100">{value}</div>
-      {sub && <div className="mt-1 text-[11.5px] leading-relaxed text-zinc-500">{sub}</div>}
-      {more && <div className="mt-2.5 border-t border-white/[0.06] pt-2 text-[11.5px] text-zinc-400 transition group-hover:text-zinc-300">{more}</div>}
-    </Cmp>
+    </button>
   )
+}
+
+// The browser card — headline: which Chrome on which port + how many sessions;
+// detail: live screenshot health (a real 1×1 compositing probe) + tabs/pid/CDP.
+function BrowserCard({ cdp, sessions, legacy, self, navigate }) {
+  const [shot, setShot] = useState(null)   // /compositing probe: do screenshots work right now?
+  useEffect(() => {
+    let live = true
+    fetch(self.api + '/compositing').then((r) => r.json()).then((d) => { if (live) setShot(d) }).catch(() => { if (live) setShot({ error: true }) })
+    return () => { live = false }
+  }, [self.api, cdp.up])
+  const chromeLabel = (cdp.browser || '').replace('Chrome/', 'Chrome ').split('.')[0]
+  const port = cdp.port || 9223
+  const st = shot?.probe?.status
+  const shots = !shot ? { dot: 'bg-zinc-600 animate-pulse', text: 'checking…', ink: 'text-zinc-500' }
+    : shot.error ? { dot: 'bg-zinc-600', text: 'check failed', ink: 'text-zinc-500' }
+    : st === 'ok' ? { dot: 'bg-emerald-400', text: `working · ${shot.probe.ms} ms`, ink: 'text-emerald-300' }
+    : st === 'hang' ? { dot: 'bg-rose-400', text: 'would hang', ink: 'text-rose-300' }
+    : st === 'no-page' ? { dot: 'bg-zinc-600', text: 'no tab to probe', ink: 'text-zinc-500' }
+    : { dot: 'bg-zinc-600', text: 'browser off', ink: 'text-zinc-500' }
+  const big = cdp.up
+    ? <><span className="font-semibold text-zinc-50">{chromeLabel || 'Chrome'}</span> <span className="text-zinc-400">listening on</span> <span className="cl-mono text-zinc-100">:{port}</span> <span className="text-zinc-600">·</span> <span className="font-semibold text-zinc-50">{sessions}</span> <span className="text-zinc-400">{sessions === 1 ? 'session' : 'sessions'} active</span></>
+    : <><span className="font-semibold text-zinc-50">Browser not running</span> <span className="text-zinc-400">— starts on the next agent task</span></>
+  const small = cdp.up ? (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-zinc-500">
+      <span className="inline-flex items-center gap-1.5">
+        <span className={cn('size-1.5 shrink-0 rounded-full', shots.dot)} />
+        screenshots <span className={cn('font-medium', shots.ink)}>{shots.text}</span>
+      </span>
+      <span className="text-zinc-700">·</span>
+      <span className="cl-mono">{cdp.tabs} {cdp.tabs === 1 ? 'tab' : 'tabs'} · pid {cdp.pids?.[0] || '—'} · CDP {cdp.protocol || '—'}{legacy > 0 && <span className="text-amber-400"> · {legacy} legacy</span>}</span>
+    </div>
+  ) : null
+  return <LiveCard dot={cdp.up ? 'bg-emerald-400' : 'bg-zinc-600'} label="The browser" cta="open the live stack — sessions, daemons, vision & health" big={big} small={small} onClick={() => navigate('runtime')} />
 }
 
 // The install/version judgment for horse-browser itself — used by the InstallBox
@@ -313,12 +347,12 @@ function stackState(snap, run) {
         : { ok: true, value: (hb?.version ? 'v' + hb.version : 'installed'), sub: hb?.upToDate === true ? 'up to date · launcher, extension & vendored harness in one package' : 'launcher, extension & vendored harness in one package', cmd: INSTALL_CMD }
 }
 
-// The install & version box — a distinct dark card floated over the hero, top-right.
+// The install & version box — a distinct dark card on the hero's right, vertically centered.
 function InstallBox({ snap, run }) {
   const [copied, setCopied] = useState(false)
   const s = snap ? stackState(snap, run) : null
   return (
-    <div className="w-full rounded-2xl border border-white/10 bg-zinc-950/85 p-4 shadow-xl backdrop-blur-md sm:w-[19rem]">
+    <div className="w-full rounded-2xl border border-white/10 bg-zinc-950/85 p-4 shadow-xl backdrop-blur-md sm:w-[21rem]">
       <div className="flex items-center gap-2">
         <span className={cn('size-2 shrink-0 rounded-full', !s ? 'bg-zinc-600' : s.ok === true ? 'bg-emerald-400' : 'bg-amber-400')} />
         <span className="cl-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">horse-browser · npm</span>
@@ -329,12 +363,12 @@ function InstallBox({ snap, run }) {
         <>
           <div className="mt-1.5 text-[17px] font-semibold text-zinc-50">{s.value}</div>
           <div className="mt-0.5 text-[11.5px] leading-relaxed text-zinc-400">{s.sub}</div>
-          <div className="mt-3 flex items-center gap-2">
-            {s.onAction && <button onClick={s.onAction} className="rounded-full px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>{s.actionLabel}</button>}
+          <div className="mt-3 space-y-2">
+            {s.onAction && <button onClick={s.onAction} className="rounded-full px-3 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>{s.actionLabel}</button>}
             {s.cmd && (
               <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(s.cmd).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1400) }).catch(() => {}) }}
-                className="cl-mono group flex min-w-0 flex-1 items-center gap-1.5 rounded-md bg-black/50 px-2 py-1.5 text-[10.5px] text-zinc-300 ring-1 ring-white/10 transition hover:ring-white/25" title="copy">
-                <span className="text-zinc-600">$</span><span className="truncate">{s.cmd.replace('npm install -g ', '')}</span><span className={cn('ml-auto shrink-0 text-[9.5px]', copied ? 'text-emerald-400' : 'text-zinc-600 group-hover:text-zinc-400')}>{copied ? 'copied' : 'copy'}</span>
+                className="cl-mono group flex w-full min-w-0 items-center gap-1.5 rounded-md bg-black/50 px-2 py-1.5 text-[10.5px] text-zinc-300 ring-1 ring-white/10 transition hover:ring-white/25" title="copy to clipboard">
+                <span className="shrink-0 text-zinc-600">$</span><span className="truncate">{s.cmd}</span><span className={cn('ml-auto shrink-0 text-[9.5px]', copied ? 'text-emerald-400' : 'text-zinc-600 group-hover:text-zinc-400')}>{copied ? 'copied' : 'copy'}</span>
               </button>
             )}
           </div>
@@ -344,40 +378,38 @@ function InstallBox({ snap, run }) {
   )
 }
 
-// the live glance tiles — clickable entries into the detail pages. The browser +
-// driving open the live stack (runtime); what-agents-know opens the docs.
-function ConsoleTiles({ snap, navigate }) {
+// the live status — one dense browser row (Chrome, port, screenshots, stats), then
+// a slim "wired up" row below. Both click through to their detail page.
+function ConsoleTiles({ snap, self, navigate }) {
   if (!snap) return (
     <div className="mt-4 inline-flex items-center gap-1.5 text-[12.5px] text-zinc-500"><span className="size-1.5 animate-pulse rounded-full bg-amber-400" /> reading your machine…</div>
   )
   const cdp = snap.cdp || {}
   const harness = snap.harness || {}
   const cfg = (snap.versions || {})['browser-config']
+  const sessions = harness.sessions || 0
   const legacy = (harness.daemons || []).filter((d) => d.legacy).length
-  const knowledge = !cfg?.scriptAvailable
-    ? { ok: null, value: 'not applied yet', sub: 'the rule ships in the package — install horse-browser first' }
+  const wired = !cfg?.scriptAvailable
+    ? { dot: 'bg-zinc-600', big: 'Not wired up yet', line: 'install horse-browser — the always-on rule ships in the package' }
     : cfg.upToDate === true
-      ? { ok: true, value: 'rule current', sub: <>a small always-on rule + an on-demand manual (<code className="cl-mono">horse-browser skill</code>)</> }
-      : { ok: false, value: 'rule drifted', sub: 'the installed rule differs from the package’s RULE.md' }
+      ? { dot: 'bg-emerald-400', big: 'Every agent knows it', line: <>the browser rule loads into <span className="text-zinc-400">every Claude Code session</span> on start — plus <code className="cl-mono">horse-browser skill</code> on demand</> }
+      : { dot: 'bg-amber-400', big: 'Rule drifted', line: 'the installed rule differs from the package’s RULE.md — reapply it' }
+  const ss = snap.siteSkills || { hostCount: 0, fileCount: 0, hosts: [] }
+  const ssBig = ss.fileCount > 0
+    ? <><span className="font-semibold text-zinc-50">{ss.fileCount}</span> <span className="text-zinc-400">{ss.fileCount === 1 ? 'site skill' : 'site skills'}</span> <span className="text-zinc-600">·</span> <span className="font-semibold text-zinc-50">{ss.hostCount}</span> <span className="text-zinc-400">{ss.hostCount === 1 ? 'site' : 'sites'}</span></>
+    : <span className="font-semibold text-zinc-50">No site skills yet</span>
+  const ssSmall = ss.fileCount > 0
+    ? <div className="cl-mono truncate text-zinc-500">{ss.hosts.slice(0, 4).map((h) => h.host).join(' · ')}{ss.hosts.length > 4 ? ' · …' : ''}</div>
+    : <div className="text-zinc-500">per-site playbooks agents read on arrival — quirks, selectors, login traps</div>
   return (
-    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <Tile label="The browser" ok={cdp.up ? true : null}
-        value={cdp.up ? 'up on :9223' : 'not running'}
-        sub={cdp.up
-          ? <>{(cdp.browser || '').replace('Chrome/', 'Chrome ').split('.')[0]} · {cdp.tabs} {cdp.tabs === 1 ? 'tab' : 'tabs'}{cdp.pids?.[0] ? <span className="cl-mono text-zinc-600"> · pid {cdp.pids[0]}</span> : null}</>
-          : 'the next agent task starts it'}
-        more="open the live stack — sessions, daemons, vision & health"
-        onClick={() => navigate('runtime')} />
-      <Tile label="Driving now" ok={harness.sessions > 0 ? true : null}
-        value={`${harness.sessions || 0} ${harness.sessions === 1 ? 'session' : 'sessions'}`}
-        sub={harness.sessions > 0
-          ? <>each with its own daemon + tab group{legacy > 0 && <> · <span className="text-amber-400">{legacy} pre-0.9 leftover{legacy === 1 ? '' : 's'}</span></>}</>
-          : 'idle — nobody is browsing this moment'}
-        more="see who's browsing, live"
-        onClick={() => navigate('runtime')} />
-      <Tile label="What agents know" {...knowledge}
-        more="read the exact rule + manual agents load"
+    <div className="mt-4 grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <BrowserCard cdp={cdp} sessions={sessions} legacy={legacy} self={self} navigate={navigate} />
+      <LiveCard dot={wired.dot} label="Wired up" cta="read the exact rule + manual"
+        big={<span className="font-semibold text-zinc-50">{wired.big}</span>}
+        small={<div className="text-zinc-500">{wired.line}</div>}
         onClick={() => navigate('docs')} />
+      <LiveCard dot={ss.fileCount > 0 ? 'bg-emerald-400' : 'bg-zinc-600'} label="Site skills" cta="browse the per-site playbooks"
+        big={ssBig} small={ssSmall} onClick={() => navigate('site-skills')} />
     </div>
   )
 }
@@ -411,6 +443,17 @@ function CompositingCheck({ self }) {
   }
   useEffect(run, [])
   const probe = res?.probe, d = res?.display || {}
+  const dp = res?.deskpad || {}
+  const virtualUp = (d.external || 0) > 0
+  const lidProof = dp.installed && dp.running && virtualUp
+  // A screenshot working NOW is a moment-in-time truth; whether it SURVIVES a closed lid
+  // depends on a never-sleeping display. Surface that here — mirrors the DeskPad panel.
+  const durability = probe?.status !== 'ok' ? null
+    : lidProof ? { c: 'text-emerald-300/80', t: 'lid-proof — DeskPad keeps a virtual display compositing when the lid closes' }
+    : virtualUp ? { c: 'text-zinc-400', t: `composited by ${d.external} external/virtual display${d.external === 1 ? '' : 's'} — survives a closed lid while they stay connected` }
+    : dp.installed && dp.running ? { c: 'text-zinc-400', t: 'DeskPad running but not registering yet — see the panel below' }
+    : dp.installed ? { c: 'text-amber-300/90', t: 'DeskPad installed but not running — a closed lid would stop screenshots' }
+    : { c: 'text-amber-300/90', t: 'no virtual display — a closed lid would stop screenshots (install DeskPad below)' }
   const v = checking ? { tone: 'zinc', head: 'taking a real screenshot…', sub: 'a 1×1 capture through the Horse Browser, timed' }
     : !res || !probe ? { tone: 'zinc', head: 'check failed', sub: 'could not reach the module backend — recheck in a moment' }
     : probe.status === 'ok' ? { tone: 'emerald', head: 'Screenshots work right now', sub: `a real 1×1 capture came back in ${probe.ms} ms` }
@@ -438,6 +481,7 @@ function CompositingCheck({ self }) {
             <span className={cn('text-[17px] font-semibold tracking-tight', t.text)}>{v.head}</span>
           </div>
           <div className="mt-1 pl-[22px] text-[12.5px] leading-relaxed text-zinc-400">{v.sub}</div>
+          {durability && <div className={cn('mt-1.5 pl-[22px] text-[12px] leading-relaxed', durability.c)}>{durability.t}</div>}
         </div>
         <button onClick={run} disabled={checking}
           className={cn('shrink-0 rounded-full border px-3.5 py-1.5 text-[11.5px] font-semibold transition', checking ? 'border-white/10 text-zinc-600' : 'border-white/20 text-zinc-200 hover:border-white/40 hover:bg-white/5')}>
@@ -728,7 +772,7 @@ function Markdown({ text }) {
 // the reading modal (pattern from the claude-md module) — Pretty renders the
 // markdown for focus; Raw shows the exact bytes the agent gets.
 function DocModal({ doc, self, onClose }) {
-  const [raw, setRaw] = useState(false)
+  const [raw, setRaw] = useState(() => !/\.md$/i.test(doc.path))   // code files (.py) open raw; markdown opens pretty
   const [content, setContent] = useState(null)
   useEffect(() => {
     let alive = true
@@ -737,7 +781,8 @@ function DocModal({ doc, self, onClose }) {
       .catch(() => { if (alive) setContent('(could not load this doc)') })
     return () => { alive = false }
   }, [doc.path])
-  const rule = doc.kind === 'rule'
+  const accent = doc.kind === 'rule' || doc.kind === 'auth-rule'   // always-on rules get the accent badge
+  const badgeLabel = doc.kind === 'manual' ? 'on demand — horse-browser skill' : doc.kind === 'verb-file' ? 'verb source' : 'always on — every session'
   const seg = (active) => cn('rounded-md px-2.5 py-1 text-[11px] font-semibold transition', active ? 'bg-white/15 text-zinc-50 shadow-sm' : 'text-zinc-400 hover:text-zinc-200')
   return (
     <Modal onClose={onClose} size="max-w-3xl">
@@ -747,7 +792,7 @@ function DocModal({ doc, self, onClose }) {
             <div className="flex min-w-0 items-center gap-2.5">
               <Icon name="book-open" size={15} className="shrink-0 text-zinc-500" />
               <code className="cl-mono min-w-0 truncate text-[13px] font-semibold text-zinc-50">{doc.path}</code>
-              <span className={cn('hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold sm:inline', !rule && 'bg-white/[0.07] text-zinc-300')} style={rule ? { background: ACCENT + '22', color: ACCENT } : undefined}>{rule ? 'always on — every session' : 'on demand — horse-browser skill'}</span>
+              <span className={cn('hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold sm:inline', !accent && 'bg-white/[0.07] text-zinc-300')} style={accent ? { background: ACCENT + '22', color: ACCENT } : undefined}>{badgeLabel}</span>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <span className="flex items-center gap-0.5 rounded-lg bg-white/[0.08] p-0.5">
@@ -770,33 +815,6 @@ function DocModal({ doc, self, onClose }) {
 
 // the two entries agents actually get — each says WHAT it is and WHEN it
 // reaches the agent; the text itself lives in the DocModal, one click away.
-function DocEntry({ doc, onRead }) {
-  const rule = doc.kind === 'rule'
-  return (
-    <div className={cn('rounded-2xl border bg-white/[0.02] p-5', rule ? 'border-emerald-400/25' : 'border-white/10')}>
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-        <span className={cn('size-2 shrink-0 rounded-full', !doc.exists ? 'bg-amber-400' : rule ? 'bg-emerald-400' : 'bg-zinc-400')} />
-        <span className="text-[14.5px] font-semibold text-zinc-100">{rule ? 'The rule' : 'The manual'}</span>
-        <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold', !rule && 'bg-white/[0.07] text-zinc-300')} style={rule ? { background: ACCENT + '22', color: ACCENT } : undefined}>{rule ? 'always on — every session' : 'on demand — costs no context'}</span>
-        {doc.exists && <button onClick={onRead} className="ml-auto shrink-0 rounded-full border border-white/15 px-3.5 py-1 text-[11.5px] font-semibold text-zinc-200 transition hover:border-white/30 hover:text-white">Read it</button>}
-      </div>
-      <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-zinc-400">
-        {rule
-          ? <>One small file, loaded into every Claude Code session automatically — exactly like CLAUDE.md. It carries the shared-browser ground rules (your tab is yours, no focus stealing), the paved-path verbs, and the three sharp edges — everything an agent needs before its first click.</>
-          : <>The full reference behind the rule — every verb with the raw CDP it runs, the challenge playbook, the extension internals, diagnostics and gotchas. An agent prints it with <code className="cl-mono text-[12px] text-zinc-300">horse-browser skill</code> only when it needs the depth, so it costs nothing until asked.</>}
-      </p>
-      {doc.exists ? (
-        <div className="cl-mono mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-zinc-600">
-          <span className="truncate">{doc.path}</span>
-          <span className="shrink-0">{doc.lines} lines · {(doc.bytes / 1000).toFixed(1)} kB{rule && ` · ~${Math.round(doc.bytes / 40) * 10} tokens per session`}</span>
-        </div>
-      ) : (
-        <p className="mt-2 text-[12px] text-amber-400">{rule ? 'not applied yet — use the “What agents know” tile above.' : 'missing on disk — reinstall horse-browser (the manual ships in the package).'}</p>
-      )}
-    </div>
-  )
-}
-
 /* ──────────────────────────────── module ─────────────────────────────────── */
 // small shared section header for the board
 function SectionLabel({ children, hint }) {
@@ -813,29 +831,25 @@ function SectionLabel({ children, hint }) {
  * link bottom-left, and the install/version box floated top-right (a distinct
  * dark card — install is kept separate from the live-status panels below). */
 function Hero({ snap, navigate, img, run }) {
-  const cdp = snap?.cdp
-  const sessions = snap?.harness?.sessions || 0
   return (
-    <Reveal className="relative -mx-6 -mt-6 mb-9 overflow-hidden lg:-mx-10 lg:-mt-10">
-      <div className="relative min-h-[13rem] sm:min-h-[13.5rem]">
+    <Reveal className="relative -mx-6 -mt-6 mb-12 overflow-hidden lg:-mx-10 lg:-mt-10">
+      <div className="relative flex min-h-[24rem] items-center sm:min-h-[26rem]">
         <img src={img('horse-banner.jpg')} loading="lazy" alt="" className="absolute inset-0 h-full w-full object-cover object-[center_28%]" />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/55 to-zinc-950/25" />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-zinc-950/90 via-zinc-950/30 to-zinc-950/60" />
-        {/* install & version box — floated top-right, a distinct dark card */}
-        <div className="absolute right-6 top-5 z-10 lg:right-10"><InstallBox snap={snap} run={run} /></div>
-        {/* brand + story link, bottom-left */}
-        <div className="absolute inset-x-0 bottom-0 px-6 pb-5 lg:px-10">
-          <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-100/85">The Horse Browser</div>
-          <h1 className="text-[26px] font-semibold leading-none tracking-tight text-white sm:text-[30px]">A browser your agents drive</h1>
-          <p className="mt-2 max-w-md text-[13px] leading-snug text-zinc-300">Logged in, never in your way — a second browser just for agents. This is its control board.</p>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <button onClick={() => navigate('story')} className="group inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3.5 py-1.5 text-[12px] font-semibold text-white backdrop-blur-sm transition hover:border-white/40 hover:bg-white/15">
-              Read the full story <span className="transition group-hover:translate-x-0.5">→</span>
-            </button>
-            {cdp?.up
-              ? <span className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-zinc-300"><span className="size-1.5 rounded-full bg-emerald-400" />up on :9223{sessions > 0 ? ` · ${sessions} driving` : ''}</span>
-              : <span className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-zinc-500"><span className="size-1.5 rounded-full bg-zinc-500" />browser idle</span>}
+        {/* title (left) + install box (right) share one horizontal band — both vertically centered */}
+        <div className="relative z-10 flex w-full flex-col gap-7 px-6 py-8 sm:flex-row sm:items-center sm:justify-between lg:px-10">
+          <div>
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-100/85">The Horse Browser</div>
+            <h1 className="text-[26px] font-semibold leading-none tracking-tight text-white sm:text-[30px]">A browser your agents drive</h1>
+            <p className="mt-2 max-w-md text-[13px] leading-snug text-zinc-300">Logged in, never in your way — a second browser just for agents. This is its control board.</p>
+            <div className="mt-3.5">
+              <button onClick={() => navigate('story')} className="group inline-flex items-center gap-1.5 text-[12.5px] font-medium text-zinc-300 transition hover:text-white">
+                Read the full story <span className="text-zinc-500 transition group-hover:translate-x-0.5 group-hover:text-zinc-300">→</span>
+              </button>
+            </div>
           </div>
+          <div className="shrink-0"><InstallBox snap={snap} run={run} /></div>
         </div>
       </div>
     </Reveal>
@@ -860,13 +874,14 @@ function Board({ snap, self, navigate, actions, img }) {
       {/* live status — clickable tiles into the detail pages */}
       <Reveal>
         <SectionLabel hint="live from this machine — click through for the detail">Live status</SectionLabel>
-        <ConsoleTiles snap={snap} navigate={navigate} />
+        <ConsoleTiles snap={snap} self={self} navigate={navigate} />
       </Reveal>
 
       {/* credentials & access — the whole auth system, live, on the board */}
       <Reveal>
         <div className="mt-12 sm:mt-14">
           <SectionLabel hint="how agents sign in — the secret never enters the model">Credentials &amp; access</SectionLabel>
+          {/* AuthPanel warms/slides the vault on mount so hints are ready for agents. */}
           <AuthPanel self={self} navigate={navigate} />
           <ActionConsole entry={(byId && byId['install-browser-config']) || {}} title="applying the browser rule" />
         </div>
@@ -925,25 +940,336 @@ function Runtime({ snap, self, navigate, actions }) {
 
 /* ─────────────────────────── subpage: docs ──────────────────────────────────
  * The two files agents actually get — moved off the board. */
+/* ─── the docs page: the four layers an agent works through ──────────────────
+ * general → specific — rules, verbs, site skills, systems. Centered (not a
+ * left-corner column), origin-tagged, and framed as a scan ("where we look")
+ * so it can go live later. L1 keeps the real Read-it modals; L4 collapses. */
+const DOC_ORIGINS = {
+  npm: { c: 'text-sky-300', bg: 'bg-sky-400/10' },
+  module: { c: 'text-emerald-300', bg: 'bg-emerald-400/10' },
+  you: { c: 'text-amber-300', bg: 'bg-amber-400/10' },
+  system: { c: 'text-zinc-400', bg: 'bg-white/[0.07]' },
+}
+function Origin({ o }) {
+  const m = DOC_ORIGINS[o] || DOC_ORIGINS.system
+  return <span className={cn('cl-mono inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10.5px] font-semibold', m.bg, m.c)}><span className="size-1.5 rounded-full bg-current" />{o}</span>
+}
+function ScanRow({ children }) {
+  return <div className="cl-mono mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-500"><span className="rounded border border-white/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500">where we look</span>{children}</div>
+}
+function DocLayer({ num, title, desc, scan, children }) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+      <div className="border-b border-white/10 bg-white/[0.015] px-5 py-4 sm:px-6">
+        <div className="flex items-start gap-3.5">
+          <span className="cl-mono shrink-0 pt-1 text-[11px] font-bold tracking-[0.1em] text-zinc-600">{num}</span>
+          <div className="min-w-0">
+            <h3 className="text-[16.5px] font-semibold tracking-tight text-zinc-100">{title}</h3>
+            <p className="mt-1 max-w-[70ch] text-[13px] leading-relaxed text-zinc-400">{desc}</p>
+            {scan && <ScanRow>{scan}</ScanRow>}
+          </div>
+        </div>
+      </div>
+      <div className="px-5 py-3 sm:px-6">{children}</div>
+    </section>
+  )
+}
+function DocFolder({ children }) {
+  return <div className="cl-mono mb-2 mt-7 text-[12px] leading-snug text-zinc-500 first:mt-1">{children}</div>
+}
+function DocNode({ last, name, verbs, desc, meta, warn, origin, action }) {
+  return (
+    <div className="grid grid-cols-[18px_minmax(0,1fr)_auto] items-baseline gap-x-2.5 border-t border-white/[0.05] py-2.5 first:border-t-0">
+      <span className="cl-mono select-none text-[13px] text-zinc-700">{last ? '└─' : '├─'}</span>
+      <div className="min-w-0">
+        <span className="cl-mono text-[13.5px] font-semibold text-zinc-100">{name}</span>
+        {verbs && <VerbList items={verbs} />}
+        {desc && <div className="mt-1 text-[12.5px] leading-snug text-zinc-400">{desc}</div>}
+        {meta && <div className="cl-mono mt-1 truncate text-[10.5px] text-zinc-600">{meta}</div>}
+        {warn && <div className="mt-1 text-[11.5px] text-amber-400">{warn}</div>}
+      </div>
+      <div className="flex shrink-0 items-center gap-2 self-center">{action}<Origin o={origin} /></div>
+    </div>
+  )
+}
+const SYSTEMS = [
+  { n: 'horse-browser', o: 'npm', d: <>The package itself: the launcher, the tab-grouper Chrome extension, and the vendored CDP daemon (<code className="cl-mono text-[11px] text-zinc-300">horse_harness.daemon</code>) that drives tabs.</> },
+  { n: 'Chrome', o: 'system', d: 'Chrome-for-Testing — the actual browser agents drive. A pinned build so the stealth mask matches its version.' },
+  { n: 'CDP', o: 'system', d: 'Chrome DevTools Protocol — the wire between the daemon and Chrome. Every verb ultimately becomes a CDP call.' },
+  { n: 'hb-broker', o: 'module', d: 'The signed local daemon holding the only vault session; types secrets over CDP, origin-checked and policy-gated. Lives in Application Support, outside every repo.' },
+  { n: 'Bitwarden', o: 'system', d: <>The <code className="cl-mono text-[11px] text-zinc-300">bw</code> CLI + vault the broker reads from. Tiered per collection: auto / ask / never.</> },
+  { n: 'DeskPad', o: 'system', d: 'Optional virtual display — keeps macOS compositing so screenshots survive a closed lid. Brew cask, sandboxed, no network.' },
+]
+// one-line description per verb — surfaced in a hover popup on the L2 verb lists
+const VERB_DESC = {
+  bh_open: 'Open (or reuse) your own tab and navigate it to a URL.',
+  goto_url: 'Navigate the current tab to a URL.',
+  js: 'Run a JavaScript expression in the page and return its result.',
+  cdp: 'Send a raw Chrome DevTools Protocol command — the escape hatch under every verb.',
+  page_info: 'The current tab’s URL, title, and viewport size.',
+  wait_for_load: 'Wait for the page to finish loading.',
+  capture_screenshot: 'A reliable PNG of your tab — works even backgrounded or occluded.',
+  bh_list: 'List the tabs in your session.',
+  click: 'Trusted click on a CSS selector — fires real mouse events, so the page’s listeners run.',
+  click_xy: 'Trusted click at x, y coordinates.',
+  type_into: 'Trusted typing into a field — fires real key events, so React/Vue state updates.',
+  type_text: 'Type text at the current focus.',
+  press: 'Press a named key — Enter, Tab, Escape…',
+  press_hold: 'Press and hold a key or button for a duration — for press-&-hold challenges.',
+  drag: 'Drag from one point or element to another — for slider challenges.',
+  challenge_cleared: 'Check whether an anti-bot challenge has cleared.',
+  type_secret: 'The broker types a vault password into a field — returns a char count, never the value.',
+  type_totp: 'The broker types the current 2FA code into a field.',
+  get_secret: 'Return a secret for non-web (CLI/env) use — a macOS approval each time; never print it.',
+  get_totp: 'Return the current TOTP code for non-web use.',
+  creds: 'List the logins you’re allowed to use — your allow-list.',
+  obs_install: 'Install network + JS-error capture on the page.',
+  obs_dump: 'Dump the captured network requests and console errors.',
+  scroll_to: 'Scroll an element into view.',
+  shot: 'Screenshot a single element.',
+  ac_items: 'Read the page’s autocomplete suggestions.',
+}
+// verb chips with a hover popup. The tooltip is position:fixed so it escapes the
+// layer card's overflow-hidden; positioned from the hovered chip's bounding rect.
+function VerbList({ items }) {
+  const [tip, setTip] = useState(null)
+  const show = (e, desc) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ desc, x: r.left + r.width / 2, y: r.top }) }
+  return (
+    <div className="cl-mono mt-1 flex flex-wrap items-center gap-y-1 text-[11.5px] leading-relaxed">
+      {items.map((v, i) => (
+        <span key={v.name} className="inline-flex items-center">
+          <span onMouseEnter={(e) => show(e, v.desc)} onMouseLeave={() => setTip(null)}
+            className="cursor-help rounded px-1 py-0.5 text-zinc-400 transition hover:bg-white/[0.08] hover:text-zinc-100">{v.name}</span>
+          {i < items.length - 1 && <span className="px-1 text-zinc-700">·</span>}
+        </span>
+      ))}
+      {tip && ReactDOM.createPortal(
+        <div className="pointer-events-none fixed z-[60] -translate-x-1/2 -translate-y-full" style={{ left: tip.x, top: tip.y - 9 }}>
+          <div className="max-w-[250px] rounded-lg border border-white/15 bg-zinc-900 px-3 py-2 text-[12px] leading-snug text-zinc-100 shadow-xl" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif' }}>{tip.desc}</div>
+          <div className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/15 bg-zinc-900" />
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
 function Docs({ snap, self, navigate }) {
   const ruleDoc = snap?.agentDocs?.docs?.find((d) => d.kind === 'rule')
+  const authDoc = snap?.agentDocs?.docs?.find((d) => d.kind === 'auth-rule')
   const manualDoc = snap?.agentDocs?.docs?.find((d) => d.kind === 'manual')
+  const verbFiles = (snap?.agentDocs?.docs || []).filter((d) => d.kind === 'verb-file')
+  const docFor = (base) => verbFiles.find((d) => d.path.endsWith(base))
   const [reader, setReader] = useState(null)
+  const [showSys, setShowSys] = useState(false)
+  // the verbs come LIVE from the harness — `horse-browser verbs --json` (name, tier, docstring).
+  // Nothing about them is hardcoded here; VERB_DESC is only a fallback for verbs with no docstring.
+  const [verbRows, setVerbRows] = useState(null)
+  useEffect(() => { fetch(self.api + '/verbs').then((r) => r.json()).then((v) => setVerbRows(Array.isArray(v) ? v : [])).catch(() => setVerbRows([])) }, [])
+  const readBtn = (doc) => doc?.exists
+    ? <button onClick={() => setReader(doc)} className="cl-mono shrink-0 rounded-full border border-white/15 px-2.5 py-0.5 text-[10.5px] font-semibold text-zinc-300 transition hover:border-white/30 hover:text-white">Read</button>
+    : null
+  const stat = (doc) => doc?.exists ? `${doc.lines} lines · ${(doc.bytes / 1000).toFixed(1)} kB` : null
+  // group the introspected verbs by source file into the three tiers, ordered core → plugins → local
+  const bucket = (t) => t === 'core' ? 'core' : t.startsWith('plugin') ? 'plugins' : 'local'
+  const TIER_META = {
+    core: { head: 'core', sub: 'shipped CDP verbs — read for reference (npm owns them)' },
+    plugins: { head: 'plugins', sub: 'installable capability bundles — load between core and your file' },
+    local: { head: 'local', sub: 'your own file — loaded last, so it always wins' },
+  }
+  const _fileMap = {}
+  ;(verbRows || []).forEach((r) => {
+    const g = _fileMap[r.file] || (_fileMap[r.file] = { file: r.file, base: r.file.split('/').pop(), tier: r.tier, verbs: [] })
+    g.verbs.push({ name: r.name, desc: r.doc || VERB_DESC[r.name] || '' })
+  })
+  const rank = (g) => bucket(g.tier) === 'core' ? 0 : bucket(g.tier) === 'plugins' ? 1 : 2
+  const verbGroups = Object.values(_fileMap).sort((a, b) => rank(a) - rank(b) || a.base.localeCompare(b.base))
+  const l2body = []
+  ;['core', 'plugins', 'local'].forEach((bk) => {
+    const files = verbGroups.filter((g) => bucket(g.tier) === bk)
+    if (!files.length) return
+    const dir = files[0].file.slice(0, files[0].file.lastIndexOf('/') + 1)   // shared dir (shortened server-side)
+    l2body.push(<DocFolder key={'f-' + bk}><b className="font-semibold text-zinc-400">{TIER_META[bk].head}</b> <code className="cl-mono rounded bg-white/[0.05] px-1.5 py-0.5 text-[10.5px] text-zinc-300">{dir}</code> — {TIER_META[bk].sub}</DocFolder>)
+    files.forEach((g, i) => {
+      const origin = bk === 'core' ? 'npm' : bk === 'local' ? 'you' : (g.base === 'atelier_login.py' ? 'module' : 'you')
+      l2body.push(<DocNode key={g.file} last={i === files.length - 1} name={g.base} origin={origin} verbs={g.verbs} action={readBtn(docFor(g.base))} />)
+    })
+  })
   return (
     <>
       <button onClick={() => navigate('')} className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition hover:text-zinc-100">← back to the board</button>
-      <Reveal>
-        <Step dark label="How agents learn it" color={ACCENT} title="One always-on rule, one on-demand manual" className="!mt-0"
-          lead={<>There's no prompting ritual — two files, and every agent knows how to drive this browser. The exact text is one click away.</>}>
-          <div className="max-w-3xl space-y-4">
-            {ruleDoc && <DocEntry doc={ruleDoc} onRead={() => setReader(ruleDoc)} />}
-            {manualDoc && <DocEntry doc={manualDoc} onRead={() => setReader(manualDoc)} />}
-            {!ruleDoc && !manualDoc && <div className="text-[13px] text-zinc-500">reading the docs…</div>}
+      <div className="mx-auto max-w-4xl">
+        <Reveal>
+          <div className="cl-mono text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: ACCENT }}>what an agent works through</div>
+          <h1 className="mt-2.5 text-[27px] font-semibold leading-tight tracking-tight text-zinc-50 sm:text-[32px]">Four layers, general to specific</h1>
+          <p className="mt-3 max-w-[66ch] text-[15px] leading-relaxed text-zinc-400">Start with the <span className="text-zinc-200">rules</span> that tell an agent this exists, drop to the <span className="text-zinc-200">verbs</span> it can call, then the <span className="text-zinc-200">site skills</span> that fire on the page it's on, and finally the <span className="text-zinc-200">systems</span> running underneath. Each layer names where we look — so it can become a live scan of what's installed. Tags show each thing's origin.</p>
+
+          <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-[12.5px] text-zinc-400">
+            <span className="cl-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">origin</span>
+            <span className="inline-flex items-center gap-1.5"><Origin o="npm" /> the package</span>
+            <span className="inline-flex items-center gap-1.5"><Origin o="module" /> this module</span>
+            <span className="inline-flex items-center gap-1.5"><Origin o="you" /> hand-authored</span>
+            <span className="inline-flex items-center gap-1.5"><Origin o="system" /> a running service</span>
           </div>
-        </Step>
-      </Reveal>
+          <p className="mt-2.5 px-1 text-[12.5px] text-zinc-500">A file can live in <span className="text-zinc-300">more than one place</span> — the same verb name can load from several folders. Each layer lists every location it scans, most general first.</p>
+
+          <div className="mt-6 space-y-6">
+            <DocLayer num="L1" title="The rules — how an agent knows any of this exists"
+              desc="Always-on: every Claude Code session loads the rules on start — no accounts, no secrets, just the protocol. One deeper manual waits behind a command, pulled only when needed."
+              scan={<><span className="text-zinc-400">~/.claude/rules/</span><span className="text-zinc-600">·</span><code className="cl-mono rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] text-zinc-200">horse-browser skill</code></>}>
+              <DocFolder><b className="font-semibold text-zinc-400">~/.claude/rules/</b> — always-on, loaded into every session</DocFolder>
+              <DocNode name="horse-browser.md" origin="npm"
+                desc="the browsing rule + the verb index — how to drive the browser, what the paved verbs are"
+                meta={stat(ruleDoc)} warn={ruleDoc && !ruleDoc.exists ? 'not applied yet — apply it from the board’s “What agents know” tile' : null}
+                action={readBtn(ruleDoc)} />
+              <DocNode last name="horse-browser-auth.md" origin="module"
+                desc="the credential rule — use the broker, never type a secret yourself; auto / ask / never is the broker’s call"
+                meta={stat(authDoc)} warn={authDoc && !authDoc.exists ? 'not installed yet — set up the broker' : null}
+                action={readBtn(authDoc)} />
+              <DocFolder><b className="font-semibold text-zinc-400">on demand</b> · <code className="cl-mono rounded bg-white/[0.08] px-1.5 py-0.5 text-[11px] text-zinc-200">horse-browser skill</code> — pulled only when an agent needs the depth</DocFolder>
+              <DocNode last name="MANUAL.md" origin="npm"
+                desc="every verb with the raw CDP it runs, the challenge playbook, extension internals, diagnostics"
+                meta={stat(manualDoc)} action={readBtn(manualDoc)} />
+            </DocLayer>
+
+            <DocLayer num="L2" title="The verbs — every command an agent can call"
+              desc="The Python an agent actually calls — each verb is a thin wrapper over one Chrome DevTools Protocol command, so it drives Chrome directly rather than through pre-built buttons. Three tiers merge into one namespace, loaded last-wins: core, then plugins, then your own file."
+              scan={<><code className="cl-mono rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] text-zinc-200">horse-browser verbs --json</code><span className="text-zinc-600">·</span><span className="text-zinc-400">live from the harness</span></>}>
+              {verbRows == null ? <div className="py-3 text-[12.5px] text-zinc-500">reading the harness…</div>
+                : l2body.length === 0 ? <div className="py-3 text-[12.5px] text-zinc-500">no verbs found — is horse-browser installed?</div>
+                : l2body}
+              <div className="mt-6 rounded-xl border border-white/[0.07] bg-white/[0.015] px-5 py-4 text-[12.5px] leading-relaxed text-zinc-400">
+                <span className="font-semibold text-zinc-200">How they load &amp; who wins.</span> Each call loads <span className="text-zinc-300">core</span> first, then every <span className="text-zinc-300">plugin</span> in <code className="cl-mono text-[11.5px] text-zinc-300">plugins/</code>, then your <span className="text-zinc-300">local</span> <code className="cl-mono text-[11.5px] text-zinc-300">agent_helpers.py</code> — and the last definition of a name wins. So <span className="text-zinc-300">your file overrides anything</span>: write the one verb you need and it takes precedence. Safe even for the broker verbs — their security is enforced in the daemon, not in the Python.
+                <div className="cl-mono mt-2.5 flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 font-semibold text-zinc-200">core</span><span style={{ color: ACCENT }}>→</span>
+                  <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 font-semibold text-zinc-200">plugins/*.py</span><span style={{ color: ACCENT }}>→</span>
+                  <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 font-semibold text-zinc-200">agent_helpers.py <span className="text-amber-300">· wins</span></span>
+                </div>
+                <div className="mt-2.5">Ownership: <span className="text-zinc-200">core</span> is replaced by npm on update · <span className="text-zinc-200">plugins</span> are owned by whoever installed them (the broker plugin rewrites itself to canonical when it drifts) · <span className="text-zinc-200">your file</span> is written by no one but you.</div>
+              </div>
+            </DocLayer>
+
+            <DocLayer num="L3" title="Site skills — context that fires on the page you’re on"
+              desc="Not always loaded — triggered by where the agent navigates. A hook runs on every first navigation; domain notes surface when the host matches."
+              scan={<><span className="text-zinc-400">~/.config/horse-browser/hints.d/</span><span className="text-zinc-600">·</span><span className="text-zinc-400">~/.config/browser-harness/agent-workspace/domain-skills/&lt;host&gt;/</span></>}>
+              <DocFolder><b className="font-semibold text-zinc-400">~/.config/horse-browser/hints.d/</b> — every executable runs on first navigation (a plug point — add your own)</DocFolder>
+              <DocNode last name="atelier-hb-auth" origin="module" desc="the per-site hint hook — asks the broker if this site has a saved login and prints “vault login available”" />
+              <div className="mt-5 overflow-x-auto rounded-lg border border-white/10 bg-black/30 px-4 py-3 font-mono text-[11.5px] leading-relaxed text-zinc-300">🐴 vault login available · you@example.com <span className="text-amber-300">(ask — prompts you)</span> → type_secret(<span className="text-amber-300">"&lt;item-id&gt;"</span>, target) · 2FA: type_totp("&lt;item-id&gt;", target)</div>
+              <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500">What an agent sees on a site with a saved login. The TOTP code is never in the hint — <code className="cl-mono text-zinc-400">type_totp</code> asks the broker to compute it at fill time.</p>
+              <DocFolder><b className="font-semibold text-zinc-400">~/.config/browser-harness/agent-workspace/domain-skills/&lt;host&gt;/</b> — matched by hostname, surfaced on navigation</DocFolder>
+              <DocNode last name="*.md" origin="you" desc="your per-site notes — quirks, selectors, login traps for a specific domain" />
+            </DocLayer>
+
+            <section className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+              <button onClick={() => setShowSys((s) => !s)} className="flex w-full items-start gap-3.5 px-5 py-4 text-left transition hover:bg-white/[0.01] sm:px-6">
+                <span className="cl-mono shrink-0 pt-1 text-[11px] font-bold tracking-[0.1em] text-zinc-600">S</span>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-[16.5px] font-semibold tracking-tight text-zinc-100">Systems — what’s actually running underneath</h3>
+                  <p className="mt-1 max-w-[70ch] text-[13px] leading-relaxed text-zinc-400">The substrate the three layers above ride on — the machinery, not the interface. {showSys ? 'Tap to collapse.' : 'Tap to expand.'}</p>
+                </div>
+                <span className={cn('shrink-0 pt-1 text-[13px] text-zinc-500 transition-transform', showSys && 'rotate-90')}>▸</span>
+              </button>
+              {showSys && (
+                <div className="grid gap-3.5 border-t border-white/10 px-5 py-5 sm:grid-cols-2 sm:px-6 lg:grid-cols-3">
+                  {SYSTEMS.map((s) => (
+                    <div key={s.n} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                      <div className="mb-1.5 flex items-center gap-2"><span className="cl-mono text-[13px] font-bold text-zinc-100">{s.n}</span><span className="ml-auto"><Origin o={s.o} /></span></div>
+                      <p className="text-[12px] leading-relaxed text-zinc-400">{s.d}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+
+          <p className="mt-8 text-[12.5px] leading-relaxed text-zinc-500">Only one layer is authored by <span className="text-amber-300">you</span> and shipped by nobody — your <code className="cl-mono text-[11.5px] text-zinc-400">agent_helpers.py</code> verbs and <code className="cl-mono text-[11.5px] text-zinc-400">domain-skills/</code> notes. Everything else regenerates from its origin; those don’t.</p>
+        </Reveal>
+      </div>
       {reader && <DocModal key={reader.path} doc={reader} self={self} onClose={() => setReader(null)} />}
-      <div className="mt-14"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
+      <div className="mx-auto mt-12 max-w-4xl"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
+    </>
+  )
+}
+
+/* ── site skills — the per-host playbooks explorer (domain-skills/<host>/*.md) ──
+ * The board's third live tile opens this: every host that has a skill, each file
+ * expandable to its raw markdown. Empty state teaches how to author the first one. */
+function SiteSkills({ self, navigate, snap }) {
+  const [tree, setTree] = useState(null)
+  const [open, setOpen] = useState({})   // "host/name" -> expanded
+  useEffect(() => {
+    let live = true
+    fetch(self.api + '/site-skills').then((r) => r.json()).then((d) => { if (live) setTree(d) }).catch(() => { if (live) setTree({ hosts: [], error: true }) })
+    return () => { live = false }
+  }, [self.api])
+  const dir = tree?.dir || snap?.siteSkills?.dir || '~/.config/browser-harness/agent-workspace/domain-skills'
+  const hosts = tree?.hosts || []
+  const fileCount = hosts.reduce((n, h) => n + h.skills.length, 0)
+  const toggle = (k) => setOpen((o) => ({ ...o, [k]: !o[k] }))
+  return (
+    <>
+      <button onClick={() => navigate('')} className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition hover:text-zinc-100">← back to the board</button>
+      <div className="mx-auto max-w-4xl">
+        <Reveal>
+          <div className="cl-mono text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: ACCENT }}>per-site playbooks</div>
+          <h1 className="mt-2.5 text-[27px] font-semibold leading-tight tracking-tight text-zinc-50 sm:text-[32px]">Site skills</h1>
+          <p className="mt-3 max-w-[66ch] text-[15px] leading-relaxed text-zinc-400">A site skill is a note an agent reads the moment it lands on a host — the quirks, selectors, and login traps of that one site, plus any helpers written for it. It's also where an agent <span className="text-zinc-200">banks what it learned the hard way</span>: once it's worked out a site's flow, it writes that down here, so the next agent — or its own next session — starts from that knowledge instead of rediscovering it. On navigation the harness surfaces the matching skill; after a few visits with none, it nudges the agent to write one. Host is normalised to <code className="cl-mono text-zinc-300">domain.tld</code> — www, subdomain and path are ignored.</p>
+          <div className="mt-4 inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-[12px] text-zinc-400">
+            <span className="cl-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">where</span>
+            <code className="cl-mono text-zinc-300">{dir}/&lt;domain.tld&gt;/&lt;name&gt;.md</code>
+          </div>
+
+          <div className="mt-6">
+            {tree == null ? <div className="py-6 text-[13px] text-zinc-500">reading the workspace…</div>
+              : fileCount === 0 ? (
+                <div className="rounded-2xl border border-dashed border-white/12 bg-white/[0.015] px-5 py-8 text-center">
+                  <div className="text-[15px] font-medium text-zinc-200">No site skills yet</div>
+                  <p className="mx-auto mt-2 max-w-[54ch] text-[13px] leading-relaxed text-zinc-500">Agents write these themselves. The first time one works out a site's quirks, it saves a markdown note here — and every later agent that lands on that host reads it. Nothing for you to set up; this list fills in as agents work.</p>
+                  <div className="cl-mono mt-3 inline-block rounded-lg border border-white/10 bg-black/40 px-3.5 py-2.5 text-left text-[11.5px] leading-relaxed text-zinc-500">
+                    <span className="text-zinc-600"># an agent writes, e.g.</span><br />
+                    {dir}/<span className="text-amber-300">github.com</span>/<span className="text-amber-300">pr-review</span>.md
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {hosts.map((h) => (
+                    <section key={h.host} className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+                      <div className="flex items-center gap-2.5 border-b border-white/[0.06] px-5 py-3">
+                        <span className="size-1.5 shrink-0 rounded-full bg-emerald-400" />
+                        <span className="cl-mono text-[13.5px] font-semibold text-zinc-100">{h.host}</span>
+                        <span className="ml-auto text-[11px] text-zinc-500">{h.skills.length} {h.skills.length === 1 ? 'skill' : 'skills'}</span>
+                      </div>
+                      <div className="divide-y divide-white/[0.05]">
+                        {h.skills.map((s) => {
+                          const k = h.host + '/' + s.name
+                          const isOpen = !!open[k]
+                          return (
+                            <div key={k}>
+                              <button onClick={() => toggle(k)} className="flex w-full items-center gap-3 px-5 py-3 text-left transition hover:bg-white/[0.02]">
+                                <span className={cn('shrink-0 text-[12px] text-zinc-500 transition-transform', isOpen && 'rotate-90')}>▸</span>
+                                <span className="min-w-0 flex-1 truncate">
+                                  <span className="text-[13.5px] text-zinc-200">{s.title}</span>
+                                  <span className="cl-mono ml-2 text-[11px] text-zinc-600">{s.name}</span>
+                                </span>
+                                <span className="shrink-0 text-[11px] text-zinc-600">{(s.bytes / 1000).toFixed(1)} kB</span>
+                              </button>
+                              {isOpen && (
+                                <div className="border-t border-white/[0.05] bg-black/30 px-5 py-4">
+                                  <pre className="cl-mono max-h-[26rem] overflow-auto whitespace-pre-wrap break-words text-[12px] leading-relaxed text-zinc-300">{s.body}</pre>
+                                  <div className="cl-mono mt-2 text-[10.5px] text-zinc-600">{s.path}</div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+          </div>
+        </Reveal>
+      </div>
+      <div className="mx-auto mt-12 max-w-4xl"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
     </>
   )
 }
@@ -1033,10 +1359,12 @@ export default function Module() {
   let body
   if (path === 'story') body = <Story navigate={navigate} img={img} />
   else if (path === 'credentials') body = <Settings self={self} navigate={navigate} />
+  else if (path === 'skill') body = <Skill self={self} navigate={navigate} />
   else if (path === 'accounts') body = <Accounts self={self} navigate={navigate} />
   else if (path === 'activity') body = <Activity self={self} navigate={navigate} />
   else if (path === 'runtime') body = <Runtime snap={snap} self={self} navigate={navigate} actions={actions} />
   else if (path === 'docs') body = <Docs snap={snap} self={self} navigate={navigate} />
+  else if (path === 'site-skills') body = <SiteSkills snap={snap} self={self} navigate={navigate} />
   else body = <Board snap={snap} self={self} navigate={navigate} actions={actions} img={img} />
 
   return (
