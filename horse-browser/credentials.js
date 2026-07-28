@@ -2,11 +2,11 @@
  * horse-browser/credentials.js — the credential subsystem (Bitwarden broker).
  * Vault stays warm until an explicit lock/disconnect (no idle timeout); the board warms it on open.
  *
- * Folded in from the retired hb-auth module (2026-07-24). The ENFORCED
+ * The ENFORCED
  * Bitwarden broker: a signed local daemon (./broker.js + ./native/) holds the
  * only vault session and gates every credential by collection policy + an
  * origin check read from the browser + a native macOS approval. Plus the
- * managed agent helpers (atelier_login_helpers.py) and the credential-hint hook.
+ * broker helper plugin (plugins/atelier_login.py) and the credential-hint hook.
  *
  * The security line: a secret never enters the LLM's context. The broker TYPES
  * passwords over its own CDP session; TOTP codes self-expire. This backend's
@@ -75,11 +75,11 @@ const HELPERS = [
     summary: 'ENFORCED: cred\'s password as a value — a macOS approval every time; for non-web use (CLI/env) only. Avoid printing it.' },
 ]
 
-// The canonical helper source. Kept BYTE-IDENTICAL to what hb-auth shipped so an
-// already-installed chain is adopted, not re-flagged as outdated. Secrets never
-// enter the LLM context: the broker types passwords over its own CDP session.
+// The canonical plugin source. Editing it marks installed copies as drifted —
+// the install/update path rewrites them to this. Secrets never enter the LLM
+// context: the broker types passwords over its own CDP session.
 function buildHelperCode() {
-  return `# --- hb-auth agent helpers (Bitwarden broker) — a horse-browser plugin -----------
+  return `# --- Bitwarden broker verbs — a horse-browser plugin (atelier) -----------
 # Managed by the atelier horse-browser module: a plugin in <workspace>/plugins/, auto-loaded by
 # the harness and overwritten on every install/update. Put your own tweaks in agent_helpers.py,
 # which loads LAST and wins; the broker's security is enforced in the daemon regardless.
@@ -88,12 +88,12 @@ function buildHelperCode() {
 import json as _json
 import os as _os
 
-# --- hb-auth broker helpers (Bitwarden, ENFORCED) -------------------------------
+# --- broker verbs (Bitwarden, ENFORCED) -----------------------------------------
 # These do NOT read a vault here. They ask the signed local broker daemon, which
 # holds the only Bitwarden session and enforces access + an origin check + a macOS
 # approval that this process cannot skip. A password is TYPED by the broker over its own CDP
 # session — it never enters this process or your transcript. TOTP codes self-expire,
-# so those may be returned. \`cred\` is the BITWARDEN ITEM NAME (the hb-auth hint on
+# so those may be returned. \`cred\` is the BITWARDEN ITEM NAME (the 🐴 vault hint on
 # the login page tells you the exact name to use); whether you may use it, and
 # whether it prompts, is decided by which Bitwarden collection it lives in — you
 # can't widen that. \`target\` is your OWN CDP target id (the tab you drive); YOU
@@ -296,15 +296,16 @@ use — a macOS approval each time; never print it.
 - To find accounts, call \`creds()\` — that's your allow-list (the accounts you may use).
   On any login page the broker also prints a hint naming the exact item. Never guess names.
 - Do NOT run \`bw\` yourself. The broker holds the only Bitwarden session (a raw \`bw\` can't
-  reach it), any CLI setup is the operator's one-time job, and the hb_* helpers keep the
-  secret out of your context. Always go through the helpers.
-- Never print, echo, or paste a password or OTP code. The helpers resolve them internally.
+  reach it), any CLI setup is the operator's one-time job, and the broker verbs keep the
+  secret out of your context. Always go through them.
+- Never print, echo, or paste a password or OTP code. The verbs resolve them internally.
 - Live status of the tooling on this machine: \`curl -s ${adminBase}/state\`
 
-## If a helper is missing
-If \`creds\` / \`type_secret\` is undefined, fetch the source:
-\`curl -s ${adminBase}/state | jq -r .helper.code\` and append it to the agent_helpers.py
-path that same response reports — or install it from the Horse Browser credentials page.
+## If a verb is missing
+If \`creds\` / \`type_secret\` is undefined, fetch the plugin source:
+\`curl -s ${adminBase}/state | jq -r .helper.code\` and write it to the plugin path that
+same response reports (\`.helper.moduleFile.path\`) — or install it from the Horse
+Browser credentials page.
 `
 }
 

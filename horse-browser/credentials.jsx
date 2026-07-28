@@ -1,7 +1,7 @@
 /* horse-browser/credentials.jsx — the Bitwarden broker control panel.
  *
- * Folded in from the retired hb-auth module (2026-07-24) and restyled onto the
- * dark night-console palette (no @atelier/kit — every atom is hand-rolled here).
+ * Styled on the module's dark night-console palette (no @atelier/kit — every
+ * atom is hand-rolled here).
  * The signed daemon + socket + launchd live in ./broker.js and ./native/; the
  * routes in ./credentials.js. This file is the UI at the module's `credentials`
  * sub-route, plus the compact live status card shown on the board.

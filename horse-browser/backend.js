@@ -1,4 +1,4 @@
-/* horse-browser — backend (extracted from claude5iq's backend.js).
+/* horse-browser — backend.
  *
  * Instruments read the REAL machine and report it live: the horse-browser CDP
  * on :9223 (version, tab count, PID), the horse-harness daemons (each one an
@@ -146,7 +146,7 @@ async function tabGroups() {
   finally { try { ws && ws.close() } catch {} }
 }
 
-/* ── display & health (folded in from the retired hb-display module) ──────────
+/* ── display & health (agent vision) ──────────
  * Why: with the display asleep (esp. clamshell — lid closed, box kept awake by
  * SSH) WindowServer composites nothing, so agent screenshots hang; waking a
  * closed lid is worse (macOS re-blanks ~10s later and Chrome drops every CDP
@@ -702,7 +702,7 @@ export default {
       const chromeVer = cdp.browser ? cdp.browser.replace(/^Chrome\//, '') : null
       return {
         harness: { running: harness.daemons.length > 0, count: harness.daemons.length, daemons: harness.daemons.slice(0, 16), version: hv, latest: latestH, upToDate: verGE(hv, latestH) },
-        chrome: { running: cdp.up, version: chromeVer, pid: cdp.pids[0] || null, latest: latestC, upToDate: verGE(chromeVer, latestC) },
+        chrome: { running: cdp.up, version: chromeVer, port: cdp.port, pid: cdp.pids[0] || null, latest: latestC, upToDate: verGE(chromeVer, latestC) },
         sessions: sessions.map((s) => ({ id: s.id, emoji: s.emoji, callsign: s.callsign, color: s.color, cwd: s.cwd, active: s.active })),
         tabs: cdp.tabSample.map((t) => ({ title: t.title, domain: t.domain, agent: t.title.startsWith('🐴') || t.title.startsWith('🐎'), callsign: tabMap[t.id] || null })),
       }
@@ -766,11 +766,11 @@ export default {
       const name = path.basename(req.params.name || '')
       const ext = path.extname(name).toLowerCase()
       const type = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.gif': 'image/gif' }[ext] || 'application/octet-stream'
-      try {
-        const body = fs.readFileSync(path.join(mediaDir(ctx), name))
-        res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' })
-        res.end(body)
-      } catch { res.writeHead(404); res.end('not found') }
+      // stream, don't buffer — the story-wall JPGs run to ~1.4 MB and a sync read
+      // of that per request stalls the shared event loop
+      const s = fs.createReadStream(path.join(mediaDir(ctx), name))
+      s.on('error', () => { try { res.writeHead(404); res.end('not found') } catch { res.destroy() } })
+      s.once('open', () => { res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' }); s.pipe(res) })
     })
 
     /* ── hands ── */
@@ -859,7 +859,7 @@ export default {
       res.json({ started: true }, 202)
     })
 
-    // The credential subsystem (Bitwarden broker) — folded in from hb-auth.
+    // The credential subsystem (Bitwarden broker).
     // It registers its own /broker/*, /helpers/*, /hints*, /state, /skill.md
     // routes and manages the signed daemon; returns its own teardown. Both this
     // and the credential watcher clear their slot timers at mount start, so a

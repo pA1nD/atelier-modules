@@ -1,8 +1,8 @@
 /* horse-browser/broker.js — the credential-broker daemon subsystem.
  *
- * This is the *enforced* half of hb-auth's "secrets never enter the model's
- * context" promise. The LastPass helpers keep that promise by convention (they
- * run lpass inside the agent's own process); the broker makes it a boundary: a
+ * This is the *enforced* half of the "secrets never enter the model's
+ * context" promise. Convention-based helpers keep that promise by trust (they
+ * run in the agent's own process); the broker makes it a boundary: a
  * signed local daemon (native/) is the only holder of the Bitwarden session, and
  * every path to a credential goes through per-credential policy, an origin check
  * read from the browser, and a native macOS approval prompt — none of which agent code
@@ -85,19 +85,19 @@ export async function ensureDaemon(ctx, slot, { rebuild = false } = {}) {
   if (rebuild || !fs.existsSync(BIN)) {
     if (slot.brokerBuilding) return
     slot.brokerBuilding = true
-    ctx.log('hb-auth broker: compiling daemon (first run / rebuild)…')
+    ctx.log('hb-broker: compiling daemon (first run / rebuild)…')
     const r = await run('/bin/sh', [BUILD])
     slot.brokerBuilding = false
-    if (r.code !== 0 || !fs.existsSync(BIN)) { ctx.log(`hb-auth broker: build failed: ${r.err.slice(0, 200)}`); return }
-    ctx.log('hb-auth broker: daemon built')
+    if (r.code !== 0 || !fs.existsSync(BIN)) { ctx.log(`hb-broker: build failed: ${r.err.slice(0, 200)}`); return }
+    ctx.log('hb-broker: daemon built')
   }
 
-  try { fs.writeFileSync(PLIST_PATH, plistXml()) } catch (e) { ctx.log(`hb-auth broker: plist write failed: ${e.message}`) }
+  try { fs.writeFileSync(PLIST_PATH, plistXml()) } catch (e) { ctx.log(`hb-broker: plist write failed: ${e.message}`) }
   const uid = process.getuid()
   await run('/bin/launchctl', ['bootout', `gui/${uid}/${PLIST_LABEL}`]).catch(() => {})
   const b = await run('/bin/launchctl', ['bootstrap', `gui/${uid}`, PLIST_PATH])
   await run('/bin/launchctl', ['enable', `gui/${uid}/${PLIST_LABEL}`]).catch(() => {})
-  if (b.code !== 0 && !/already|service already loaded/i.test(b.err)) ctx.log(`hb-auth broker: bootstrap: ${b.err.slice(0, 160)}`)
+  if (b.code !== 0 && !/already|service already loaded/i.test(b.err)) ctx.log(`hb-broker: bootstrap: ${b.err.slice(0, 160)}`)
 }
 
 export async function rebuildDaemon(ctx, slot) { return ensureDaemon(ctx, slot, { rebuild: true }) }
@@ -124,7 +124,7 @@ export function startAuditTail(ctx, slot) {
   try {
     if (slot.brokerAuditWatcher) { try { slot.brokerAuditWatcher.close() } catch {} }
     slot.brokerAuditWatcher = fs.watch(APP_SUPPORT, (_evt, name) => { if (name === 'audit.jsonl') emitFrom() })
-  } catch (e) { ctx.log(`hb-auth broker: audit watch failed: ${e.message}`) }
+  } catch (e) { ctx.log(`hb-broker: audit watch failed: ${e.message}`) }
 }
 
 export function stopAuditTail(slot) {

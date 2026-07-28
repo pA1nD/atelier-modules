@@ -1,21 +1,25 @@
 /* horse-browser — the control board for the Horse Browser.
  *
- * A control board that doubles as a first-run setup guide. Seven routes
+ * A control board that doubles as a first-run setup guide. Nine routes
  * (window.__atelier.useRoute):
  *   ''           the BOARD — a compact hero (+ install/version box) → clickable
- *                live-status tiles → the credentials & access dashboard (broker
- *                status, connection, reachable-account stats, quick search,
- *                recent access). Every panel surfaces its own fix-it/setup
- *                state, so the board is the setup guide.
+ *                live-status cards → the credentials & access dashboard (broker
+ *                status, connection, agent integration, reachable-account
+ *                stats, quick search, recent access). Every panel surfaces its
+ *                own fix-it/setup state, so the board is the setup guide.
  *   story        the full cinematic narrative (banner → idea → the demo
  *                agent-browser wall → the engine, horse-harness), behind a
  *                "read the full story" link off the hero.
  *   runtime      the live ops view: compositing probe + DeskPad lid-closed
  *                vision, the process wall, and the launcher's heal journal.
  *   credentials  the Bitwarden broker settings panel (see ./credentials.jsx).
+ *   skill        the "hand this to an agent" page — the login skill, pretty/raw,
+ *                with the copyable one-line prompt.
  *   accounts     the full reachable-account list (own page).
  *   activity     the credential access log (own page).
- *   docs         how agents learn it — the always-on rule + on-demand manual.
+ *   docs         how agents learn it — rules, the live verb tiers (from
+ *                `horse-browser verbs --json`), the hint hook, systems.
+ *   site-skills  the per-host playbook explorer (domain-skills/<host>/*.md).
  */
 
 import { Reveal, ChapterIntro, Step, Icon, ActionConsole, Modal, inkFor, cn, useChromeStyles, useSnapshot, useActions } from './lib.jsx'
@@ -313,6 +317,12 @@ function BrowserCard({ cdp, sessions, legacy, self, navigate }) {
     : st === 'hang' ? { dot: 'bg-rose-400', text: 'would hang', ink: 'text-rose-300' }
     : st === 'no-page' ? { dot: 'bg-zinc-600', text: 'no tab to probe', ink: 'text-zinc-500' }
     : { dot: 'bg-zinc-600', text: 'browser off', ink: 'text-zinc-500' }
+  // the /compositing probe also carries the DeskPad state — lid-closed vision
+  const dp = shot?.deskpad
+  const vd = !dp ? null
+    : dp.running ? { text: 'running', ink: 'text-emerald-300' }
+    : dp.installed ? { text: 'installed', ink: 'text-zinc-300' }
+    : { text: 'not installed', ink: 'text-zinc-500' }
   const big = cdp.up
     ? <><span className="font-semibold text-zinc-50">{chromeLabel || 'Chrome'}</span> <span className="text-zinc-400">listening on</span> <span className="cl-mono text-zinc-100">:{port}</span> <span className="text-zinc-600">·</span> <span className="font-semibold text-zinc-50">{sessions}</span> <span className="text-zinc-400">{sessions === 1 ? 'session' : 'sessions'} active</span></>
     : <><span className="font-semibold text-zinc-50">Browser not running</span> <span className="text-zinc-400">— starts on the next agent task</span></>
@@ -324,6 +334,10 @@ function BrowserCard({ cdp, sessions, legacy, self, navigate }) {
       </span>
       <span className="text-zinc-700">·</span>
       <span className="cl-mono">{cdp.tabs} {cdp.tabs === 1 ? 'tab' : 'tabs'} · pid {cdp.pids?.[0] || '—'} · CDP {cdp.protocol || '—'}{legacy > 0 && <span className="text-amber-400"> · {legacy} legacy</span>}</span>
+      {vd && <>
+        <span className="text-zinc-700">·</span>
+        <span>virtual display <span className={cn('font-medium', vd.ink)}>{vd.text}</span></span>
+      </>}
     </div>
   ) : null
   return <LiveCard dot={cdp.up ? 'bg-emerald-400' : 'bg-zinc-600'} label="The browser" cta="open the live stack — sessions, daemons, vision & health" big={big} small={small} onClick={() => navigate('runtime')} />
@@ -414,7 +428,7 @@ function ConsoleTiles({ snap, self, navigate }) {
   )
 }
 
-/* ── agent vision & health (folded in from the retired hb-display module) ──── */
+/* ── agent vision & health ──── */
 
 // a copyable shell command — click to copy, shown beside the one-click button
 function CopyCmd({ cmd }) {
@@ -646,7 +660,7 @@ function ProcessWall({ self }) {
   const cols = [
     { ok: sessions.length ? true : null, title: 'Agent sessions', status: `${sessions.length} running · sorted by name` },
     { ok: h.running ? true : null, title: 'Harness daemons', status: h.running ? `${h.count} running` : 'none' },
-    { ok: c.running ? (c.upToDate === false ? false : true) : null, title: 'Browser tabs', status: !c.running ? 'browser off' : `Chrome ${c.version || ''} running · :9223${c.upToDate === false ? ` · update → ${c.latest}` : c.upToDate ? ' · up to date' : ''}` },
+    { ok: c.running ? (c.upToDate === false ? false : true) : null, title: 'Browser tabs', status: !c.running ? 'browser off' : `Chrome ${c.version || ''} running · :${c.port || 9223}${c.upToDate === false ? ` · update → ${c.latest}` : c.upToDate ? ' · up to date' : ''}` },
   ]
   return (
     // the three-column wall needs real width — on phones it scrolls sideways inside its own card
@@ -938,8 +952,6 @@ function Runtime({ snap, self, navigate, actions }) {
   )
 }
 
-/* ─────────────────────────── subpage: docs ──────────────────────────────────
- * The two files agents actually get — moved off the board. */
 /* ─── the docs page: the four layers an agent works through ──────────────────
  * general → specific — rules, verbs, site skills, systems. Centered (not a
  * left-corner column), origin-tagged, and framed as a scan ("where we look")
@@ -1305,14 +1317,14 @@ function Story({ navigate, img }) {
 
       <Reveal className="@container">
         <div className="mt-12 max-w-3xl @4xl:mt-16">
-          <Step dark label="The engine" color={ACCENT} title="600 lines, not a hundred thousand" className="!mt-0"
+          <Step dark label="The engine" color={ACCENT} title="2,500 lines, not a hundred thousand" className="!mt-0"
             lead="The Horse Browser runs on horse-harness — born from browser-use's browser-harness, now vendored inside the package itself. That’s where the name comes from: every tab an agent opens gets a 🐴 stamped on it — so this wall is where all those live tabs gather.">
             <div className="space-y-3.5 text-[14px] leading-relaxed text-zinc-300">
               <p>Older tools — Playwright, Selenium, even browser-use — hand the agent a giant box of pre-built buttons (<code className="cl-mono text-[12.5px] text-zinc-200">click()</code>, <code className="cl-mono text-[12.5px] text-zinc-200">type()</code>, <code className="cl-mono text-[12.5px] text-zinc-200">scroll()</code>, and thousands more) that a developer <em className="text-zinc-200">guessed</em> it would need. The harness does the opposite: it hands the agent the browser’s own raw controls and a screenshot, and lets it figure the rest out — the way a person would.</p>
               <p>That’s a staggering difference in size:</p>
             </div>
             <div className="my-5 space-y-2.5">
-              {[{ name: 'Playwright', loc: 120000, w: '100%' }, { name: 'browser-use', loc: 72000, w: '60%' }, { name: 'horse-harness', loc: 600, w: '2%', us: true }].map((r) => (
+              {[{ name: 'Playwright', loc: 120000, w: '100%' }, { name: 'browser-use', loc: 72000, w: '60%' }, { name: 'horse-harness', loc: 2500, w: '2%', us: true }].map((r) => (
                 <div key={r.name} className="flex items-center gap-3 text-[12px]">
                   <span className={cn('cl-mono w-28 shrink-0 truncate', r.us ? 'font-semibold text-zinc-100' : 'text-zinc-400')}>{r.name}</span>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">

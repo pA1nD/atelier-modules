@@ -1129,7 +1129,7 @@ func handle(_ req: [String: Any]) -> [String: Any] {
     // Disconnect Bitwarden: forget the master password (Keychain), drop the
     // session, and clear the access rules + audit. The daemon stays installed so
     // re-setup is a click. Gated by a macOS approval so a rogue caller can't wipe the setup.
-    guard touchID(reason: "Disconnect Bitwarden from hb-auth — forget the master password and access rules") else {
+    guard touchID(reason: "Disconnect Bitwarden from the credential broker — forget the master password and access rules") else {
       return deny("denied", "macOS approval declined")
     }
     keychainDeleteToken()

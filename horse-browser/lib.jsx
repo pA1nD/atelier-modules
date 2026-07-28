@@ -1,6 +1,4 @@
-/* horse-browser/lib.jsx — shared design system (extracted from claude5iq's
- * lib.jsx, re-fitted for the catalyst chrome — same lineage as the statusbar
- * module's lib).
+/* horse-browser/lib.jsx — shared design system, fitted for the catalyst chrome.
  *
  * This module is the dark "night console", so ChapterIntro/Step keep their
  * dark-palette variants. Typography rides the chrome's tokens (--font-sans /

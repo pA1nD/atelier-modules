@@ -1,11 +1,12 @@
 # Horse Browser
 
 The **control board** for the Horse Browser — the dedicated browser your agents
-drive, logged in and never in your way. Extracted from the retired **claude5iq**
-module (its Browser chapter), then grown into the single home for everything
-about the agent browser: it absorbed **hb-display** (agent vision) and
-**hb-auth** (the Bitwarden credential broker), and retired the standalone
-`dev/browser` hub.
+drive, logged in and never in your way. One module is the single home for
+everything about the agent browser: the live board, agent vision (compositing
+probe + DeskPad), and the enforced Bitwarden credential broker. (Earlier
+standalone modules were merged in; that `hb-auth` heritage survives only in
+on-disk names installed machines already carry — the `atelier-hb-auth` hint
+hook and the `de.pa1nd.hb-broker` daemon label.)
 
 ## The page — routes (`window.__atelier.useRoute`)
 
@@ -30,7 +31,7 @@ click into a subpage.
      metadata, no vault unlock — plus a **quick account search**), then a
      **Recent access** log preview. Links out to Settings / all accounts / the
      full log.
-- **`credentials` — broker settings** (folded in from hb-auth, dark-restyled):
+- **`credentials` — broker settings**:
   connection management (lock / rebuild / disconnect / setup), the
   grant-by-collection table, and an agent-integration reference page. The
   reachable list and access log are their own pages now.
@@ -42,8 +43,8 @@ click into a subpage.
   with account · site · tier · requesting session. Live.
 - **`runtime` — the live operations view:** a real compositing probe (timed 1×1
   capture) + the DeskPad card and the **"why waking a sleeping display is the
-  wrong fix"** reasoning (all folded in from hb-display — it's ops, so it lives
-  here with agent vision, not in the marketing story), the process wall (agent
+  wrong fix"** reasoning (it's ops, so it lives here with agent vision, not in
+  the marketing story), the process wall (agent
   sessions · harness daemons · tabs, callsign-matched via the tab-grouper
   extension), and the launcher's `heal.log` journal, pushed on change.
 - **`docs` — how agents learn it:** the always-on rule (+ the broker's safety
@@ -62,7 +63,7 @@ click into a subpage.
 
 ## Files
 
-- `frontend.jsx` — the hero, the board, and the `story` / `runtime` / `docs` routes.
+- `frontend.jsx` — the hero, the board, and the `story` / `runtime` / `docs` / `site-skills` routes.
 - `credentials.jsx` — the Bitwarden broker UI (dark-restyled) + the board's live credentials card.
 - `credentials.js` — the credential backend: `/broker/*`, `/helpers/*`, `/hints*`, `/state`, `/skill.md` routes; imports `./broker.js`.
 - `broker.js` — the signed-daemon subsystem (socket RPC + build/launchd supervision + live audit tail).
@@ -83,7 +84,7 @@ Pure Node builtins, no deps.
 - `GET /images/:name` — bundled imagery (basename-guarded).
 - `POST /action/:id` — streams over the shell WS: `install-horse-browser` (**npm — `@pa1nd/horse-browser`**, install and update are the same command; postinstall builds the vendored harness venv; applies `claude-md.sh` after), `harness-setup` (`horse-browser harness-setup`, rebuilds the venv), `install-browser-config` (`claude-md.sh apply`), `install-deskpad` (brew cask) + `launch-deskpad`. Outward actions refuse without `{ confirm: true }`; children tracked + killed on hot-reload/shutdown.
 
-## Credentials — the Bitwarden broker (folded in from hb-auth)
+## Credentials — the Bitwarden broker
 
 The ENFORCED path: a signed local daemon (`native/`, compiled on first run into
 `~/Library/Application Support/hb-broker` — outside the module tree) holds the
