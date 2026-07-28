@@ -774,6 +774,73 @@ export default {
     })
 
     /* ── hands ── */
+    // The actual work of an action — never touches the response. Progress and the
+    // result reach the UI over the shell WS (action-log / action-done frames).
+    const runAction = async (id) => {
+      switch (id) {
+        case 'harness-setup': {
+          // the harness is vendored in the horse-browser package; harness-setup
+          // (re)builds its Python venv (uv when present, else python3 ≥ 3.11) —
+          // the same thing npm's postinstall does. Safe to re-run anytime.
+          const hb = findOnPath('horse-browser')
+          if (!hb) { emit(id, 'horse-browser not found — install it first (npm install -g @pa1nd/horse-browser)', 'stderr'); done(id, { ok: false }); return }
+          await runStreaming(id, hb, ['harness-setup'])
+          slot.verCache = {}; verBust(); tickNow()
+          return
+        }
+        case 'install-horse-browser': {
+          // npm is the source of truth now — install and update are the same command.
+          const npm = findOnPath('npm')
+          if (!npm) { emit(id, 'npm not found — install Node.js first (https://nodejs.org)', 'stderr'); done(id, { ok: false }); return }
+          const r = await runQuiet(id, npm, ['install', '-g', `${HB_NPM}@latest`])
+          if (!r.ok) { emit(id, `✗ npm install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return }
+          emit(id, `✓ ${HB_NPM} installed from npm (postinstall builds the vendored harness venv)`, 'ok')
+          // also write the browser rule file at ~/.claude/rules/horse-browser.md (idempotent) —
+          // the config that lets agents actually drive it. claude-md.sh ships in the package.
+          const cmScript = hbClaudeMdScript()
+          if (cmScript) {
+            emit(id, 'writing the browser rule into ~/.claude/rules/horse-browser.md…', 'stdout')
+            const r2 = await runQuiet(id, 'bash', [cmScript, 'apply'])
+            emit(id, r2.ok ? '✓ browser rule file applied' : `⚠ claude-md.sh apply failed (exit ${r2.code}) — run "Set up" on the config row`, r2.ok ? 'ok' : 'stderr')
+          }
+          slot.verCache = {}; verBust()
+          done(id, { ok: true }); tickNow()
+          return
+        }
+        case 'install-browser-config': {
+          // claude-md.sh writes the browser rule file at ~/.claude/rules/horse-browser.md
+          // (idempotent, re-points the version-agnostic symlink). `apply` = (re)install.
+          const script = hbClaudeMdScript()
+          if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first', 'stderr'); done(id, { ok: false }); tickNow(); return }
+          await runStreaming(id, 'bash', [script, 'apply'])
+          slot.verCache = {}; verBust(); tickNow()
+          return
+        }
+        case 'install-deskpad': {
+          const brew = findOnPath('brew')
+          if (!brew) { emit(id, 'brew not found — install Homebrew first (https://brew.sh)', 'stderr'); done(id, { ok: false }); return }
+          const r = await runQuiet(id, brew, ['install', '--cask', 'deskpad'])
+          if (!r.ok) { emit(id, `✗ brew install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return }
+          emit(id, '✓ DeskPad installed (notarized release, sha256-pinned by brew)', 'ok')
+          // launch by path — LaunchServices may not know the name seconds after install
+          const r2 = await runQuiet(id, 'open', [DESKPAD_APP])
+          emit(id, r2.ok ? '✓ DeskPad launched' : '⚠ installed but not launched — use the Launch button', r2.ok ? 'ok' : 'stderr')
+          emit(id, 'first run: approve the Screen Recording prompt once (it mirrors only its own virtual display) — then the virtual display registers', 'stdout')
+          done(id, { ok: true }); tickNow()
+          return
+        }
+        case 'launch-deskpad': {
+          if (!fs.existsSync(DESKPAD_APP)) { emit(id, 'DeskPad is not installed — install it first', 'stderr'); done(id, { ok: false }); return }
+          const r = await runQuiet(id, 'open', [DESKPAD_APP])
+          emit(id, r.ok ? '✓ DeskPad launched' : `✗ open failed (exit ${r.code})`, r.ok ? 'ok' : 'stderr')
+          done(id, { ok: r.ok }); tickNow()
+          return
+        }
+        default:
+          emit(id, 'unhandled action', 'stderr'); done(id, { ok: false })
+      }
+    }
+
     router.post('/action/:id', async (req, res) => {
       const id = req.params.id
       const def = ACTIONS[id]
@@ -786,68 +853,10 @@ export default {
         return res.json({ needsConfirm: true, danger: def.danger })
       }
 
-      switch (id) {
-        case 'harness-setup': {
-          // the harness is vendored in the horse-browser package; harness-setup
-          // (re)builds its Python venv (uv when present, else python3 ≥ 3.11) —
-          // the same thing npm's postinstall does. Safe to re-run anytime.
-          const hb = findOnPath('horse-browser')
-          if (!hb) { emit(id, 'horse-browser not found — install it first (npm install -g @pa1nd/horse-browser)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
-          const r = await runStreaming(id, hb, ['harness-setup'])
-          slot.verCache = {}; verBust(); tickNow()
-          return res.json(r)
-        }
-        case 'install-horse-browser': {
-          // npm is the source of truth now — install and update are the same command.
-          const npm = findOnPath('npm')
-          if (!npm) { emit(id, 'npm not found — install Node.js first (https://nodejs.org)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
-          const r = await runQuiet(id, npm, ['install', '-g', `${HB_NPM}@latest`])
-          if (!r.ok) { emit(id, `✗ npm install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
-          emit(id, `✓ ${HB_NPM} installed from npm (postinstall builds the vendored harness venv)`, 'ok')
-          // also write the browser rule file at ~/.claude/rules/horse-browser.md (idempotent) —
-          // the config that lets agents actually drive it. claude-md.sh ships in the package.
-          const cmScript = hbClaudeMdScript()
-          if (cmScript) {
-            emit(id, 'writing the browser rule into ~/.claude/rules/horse-browser.md…', 'stdout')
-            const r2 = await runQuiet(id, 'bash', [cmScript, 'apply'])
-            emit(id, r2.ok ? '✓ browser rule file applied' : `⚠ claude-md.sh apply failed (exit ${r2.code}) — run "Set up" on the config row`, r2.ok ? 'ok' : 'stderr')
-          }
-          slot.verCache = {}; verBust()
-          done(id, { ok: true }); tickNow()
-          return res.json({ ok: true })
-        }
-        case 'install-browser-config': {
-          // claude-md.sh writes the browser rule file at ~/.claude/rules/horse-browser.md
-          // (idempotent, re-points the version-agnostic symlink). `apply` = (re)install.
-          const script = hbClaudeMdScript()
-          if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first', 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
-          const r = await runStreaming(id, 'bash', [script, 'apply'])
-          slot.verCache = {}; verBust(); tickNow()
-          return res.json(r)
-        }
-        case 'install-deskpad': {
-          const brew = findOnPath('brew')
-          if (!brew) { emit(id, 'brew not found — install Homebrew first (https://brew.sh)', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
-          const r = await runQuiet(id, brew, ['install', '--cask', 'deskpad'])
-          if (!r.ok) { emit(id, `✗ brew install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return res.json({ ok: false }) }
-          emit(id, '✓ DeskPad installed (notarized release, sha256-pinned by brew)', 'ok')
-          // launch by path — LaunchServices may not know the name seconds after install
-          const r2 = await runQuiet(id, 'open', [DESKPAD_APP])
-          emit(id, r2.ok ? '✓ DeskPad launched' : '⚠ installed but not launched — use the Launch button', r2.ok ? 'ok' : 'stderr')
-          emit(id, 'first run: approve the Screen Recording prompt once (it mirrors only its own virtual display) — then the virtual display registers', 'stdout')
-          done(id, { ok: true }); tickNow()
-          return res.json({ ok: true })
-        }
-        case 'launch-deskpad': {
-          if (!fs.existsSync(DESKPAD_APP)) { emit(id, 'DeskPad is not installed — install it first', 'stderr'); done(id, { ok: false }); return res.json({ ok: false }) }
-          const r = await runQuiet(id, 'open', [DESKPAD_APP])
-          emit(id, r.ok ? '✓ DeskPad launched' : `✗ open failed (exit ${r.code})`, r.ok ? 'ok' : 'stderr')
-          done(id, { ok: r.ok }); tickNow()
-          return res.json({ ok: r.ok })
-        }
-        default:
-          return res.json({ error: 'unhandled' }, 500)
-      }
+      // Fire the job and answer immediately — an npm/brew install runs for minutes,
+      // and a held response eats one of the browser's ~6 sockets for this origin.
+      runAction(id).catch((e) => { emit(id, String(e?.message || e), 'stderr'); done(id, { ok: false }) })
+      res.json({ started: true }, 202)
     })
 
     // The credential subsystem (Bitwarden broker) — folded in from hb-auth.

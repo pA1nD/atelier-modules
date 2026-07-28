@@ -1,5 +1,12 @@
 # Swift build output. `npm test` and the daemon build.sh both build out-of-tree,
 # but a manual `swift run` inside native/ writes native/.build. Never ship it —
-# the collection packer force-adds past .gitignore, so it must never exist here.
+# the collection packer honors this file (gitKeepSet), and out-of-tree builds
+# keep the tree clean for anything that doesn't.
 .build/
 native/.build/
+
+# Runtime state + caches (the module writes none today, but the packer and this
+# repo should never pick them up if that changes).
+data/
+node_modules/
+.DS_Store
