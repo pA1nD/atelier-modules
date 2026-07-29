@@ -1,7 +1,10 @@
 /* horse-browser — the control board for the Horse Browser.
  *
- * A control board that doubles as a first-run setup guide. Nine routes
+ * A control board that doubles as a first-run setup guide. Ten routes
  * (window.__atelier.useRoute):
+ *   setup        the setup wizard — hand install to an agent: one full-system
+ *                prompt (the norm) + per-group prompts (browser / credentials /
+ *                display), all pointing at the live GET /setup.md skill.
  *   ''           the BOARD — a compact hero (+ install/version box) → clickable
  *                live-status cards → the credentials & access dashboard (broker
  *                status, connection, agent integration, reachable-account
@@ -22,7 +25,7 @@
  *   site-skills  the per-host playbook explorer (domain-skills/<host>/*.md).
  */
 
-import { Reveal, ChapterIntro, Step, Icon, ActionConsole, Modal, inkFor, cn, useChromeStyles, useSnapshot, useActions } from './lib.jsx'
+import { Reveal, ChapterIntro, Step, Icon, ActionConsole, Modal, inkFor, cn, useChromeStyles, useSnapshot, useActions, CopyBoom } from './lib.jsx'
 import { AuthPanel, Settings, Accounts, Activity, Skill } from './credentials.jsx'
 
 const { useState, useEffect, useRef } = React
@@ -347,24 +350,48 @@ function BrowserCard({ cdp, sessions, legacy, self, navigate }) {
 // at the top of the board. ONE judgment (installed? venv built? current?); the
 // npm command stays in the open in every state (install + update are the same).
 const INSTALL_CMD = 'npm install -g @pa1nd/horse-browser'
-function stackState(snap, run) {
+function stackState(snap) {
   const harness = snap?.harness || {}
   const hb = (snap?.versions || {})['horse-browser']
   const horse = !!snap?.tools?.['horse-browser']?.installed
-  const npmOk = !!snap?.tools?.npm?.installed
   return !horse
-    ? { ok: false, value: 'not installed', sub: npmOk ? 'one npm package — the launcher, tab-grouper extension, and vendored harness' : <>needs Node.js first: <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="underline underline-offset-2">nodejs.org</a></>, actionLabel: npmOk ? 'Install from npm' : null, onAction: npmOk ? () => run && run('install-horse-browser', { confirm: true }) : null, cmd: INSTALL_CMD }
+    ? { ok: false, value: 'not installed', sub: 'one npm package — the launcher, tab-grouper extension, and vendored harness', cmd: INSTALL_CMD }
     : !harness.installed
-      ? { ok: false, value: (hb?.version ? 'v' + hb.version : 'installed') + ' · venv missing', sub: "the vendored driver's Python venv is missing (npm's postinstall builds it)", actionLabel: 'Build the venv', onAction: () => run && run('harness-setup', { confirm: true }), cmd: 'horse-browser harness-setup' }
+      ? { ok: false, value: (hb?.version ? 'v' + hb.version : 'installed') + ' · venv missing', sub: "the vendored driver's Python venv is missing (npm's postinstall builds it)", cmd: 'horse-browser harness-setup' }
       : hb?.latest && hb.upToDate === false
-        ? { ok: false, value: `v${hb.version}`, sub: `v${hb.latest} available on npm — updating is a fresh install`, actionLabel: 'Update', onAction: () => run && run('install-horse-browser', { confirm: true }), cmd: INSTALL_CMD }
+        ? { ok: false, value: `v${hb.version}`, sub: `v${hb.latest} available on npm — updating is a fresh install`, cmd: INSTALL_CMD }
         : { ok: true, value: (hb?.version ? 'v' + hb.version : 'installed'), sub: hb?.upToDate === true ? 'up to date · launcher, extension & vendored harness in one package' : 'launcher, extension & vendored harness in one package', cmd: INSTALL_CMD }
 }
 
-// The install & version box — a distinct dark card on the hero's right, vertically centered.
-function InstallBox({ snap, run }) {
+// The install & version box — a distinct dark card on the hero's right.
+// Installation is an AGENT task: no buttons here — the command for humans who
+// want it, and the setup-skill prompt to hand the whole thing to an agent.
+function InstallBox({ snap, self, navigate }) {
   const [copied, setCopied] = useState(false)
-  const s = snap ? stackState(snap, run) : null
+  const s = snap ? stackState(snap) : null
+  const ruleOk = !!snap?.agentDocs?.docs?.find((d) => d.kind === 'rule')?.exists
+  const horse = !!snap?.tools?.['horse-browser']?.installed
+  const harnessOk = !!snap?.harness?.installed
+  const step1Done = horse && harnessOk
+  // once the browser itself exists, the box turns into a systems index: the three
+  // groups, each opening the setup wizard, each with its own scoped agent prompt
+  const [bw, setBw] = useState(null)
+  useEffect(() => {
+    let alive = true
+    fetch(self.api + '/broker/status').then((r) => r.json()).then((d) => { if (alive) setBw(d) }).catch(() => {})
+    const unsub = self.subscribe((f) => { if (f.type === 'broker-status' && f.status && alive) setBw(f.status) })
+    return () => { alive = false; unsub && unsub() }
+  }, [])
+  const bv = bw?.vault || {}
+  const bwDone = !!(bw?.installed && bv.hasSession && bv.bwStatus !== 'no-cli' && bv.bwStatus !== 'unauthenticated' && (bw?.granted || 0) > 0)
+  const dp = snap?.deskpad || {}
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const prompt = (p) => `I'm giving you a skill — read it and use it: ${origin + self.api + '/setup.md' + (p ? '?part=' + p : '')}`
+  const systems = [
+    { part: 'browser', title: 'Horse Browser', done: horse && harnessOk && ruleOk },
+    { part: 'credentials', title: 'Bitwarden credentials', done: bwDone },
+    { part: 'display', title: 'Lid-closed display', done: !!(dp.installed && dp.running) },
+  ]
   return (
     <div className="w-full rounded-2xl border border-white/10 bg-zinc-950/85 p-4 shadow-xl backdrop-blur-md sm:w-[21rem]">
       <div className="flex items-center gap-2">
@@ -378,12 +405,41 @@ function InstallBox({ snap, run }) {
           <div className="mt-1.5 text-[17px] font-semibold text-zinc-50">{s.value}</div>
           <div className="mt-0.5 text-[11.5px] leading-relaxed text-zinc-400">{s.sub}</div>
           <div className="mt-3 space-y-2">
-            {s.onAction && <button onClick={s.onAction} className="rounded-full px-3 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>{s.actionLabel}</button>}
             {s.cmd && (
               <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(s.cmd).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1400) }).catch(() => {}) }}
                 className="cl-mono group flex w-full min-w-0 items-center gap-1.5 rounded-md bg-black/50 px-2 py-1.5 text-[10.5px] text-zinc-300 ring-1 ring-white/10 transition hover:ring-white/25" title="copy to clipboard">
                 <span className="shrink-0 text-zinc-600">$</span><span className="truncate">{s.cmd}</span><span className={cn('ml-auto shrink-0 text-[9.5px]', copied ? 'text-emerald-400' : 'text-zinc-600 group-hover:text-zinc-400')}>{copied ? 'copied' : 'copy'}</span>
               </button>
+            )}
+            {!step1Done ? (
+              /* button group: open the wizard · copy the agent prompt (with the boom) */
+              /* no overflow-hidden — the copy boom must explode PAST the pill */
+              <div className="!mt-4 mb-1 flex w-full items-stretch rounded-full shadow-sm" style={{ background: ACCENT }}>
+                <button onClick={() => navigate('setup')} className="min-w-0 flex-1 px-3 py-2 text-[12px] font-semibold text-white transition hover:brightness-110">
+                  Open the setup guide →
+                </button>
+                <span className="my-1.5 w-px shrink-0 bg-white/35" />
+                <span className="flex shrink-0 items-center gap-1.5 px-3 transition hover:brightness-110">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-white/90">prompt</span>
+                  <CopyBoom value={prompt()} title="Copy the setup prompt" size={18} ink="#ffffff" className="drop-shadow-sm" />
+                </span>
+              </div>
+            ) : (
+              /* browser installed → the box is a systems index: each row opens the
+                 setup wizard; each copy button hands that system to an agent */
+              <div className="!mt-3.5 border-t border-white/10 pt-2.5">
+                <div className="cl-mono mb-1 flex items-baseline justify-between gap-2 whitespace-nowrap text-[9.5px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                  <span>setup guides · click to open</span>
+                  <span className="text-zinc-600">copy = prompt</span>
+                </div>
+                {systems.map((sys) => (
+                  <div key={sys.part} className="flex items-center gap-2.5 py-1.5">
+                    <span className={cn('size-1.5 shrink-0 rounded-full', sys.done ? 'bg-emerald-400' : 'bg-zinc-600')} />
+                    <button onClick={() => navigate('setup/' + sys.part)} className="min-w-0 flex-1 truncate text-left text-[12px] font-medium text-zinc-300 transition hover:text-white">{sys.title}</button>
+                    <CopyBoom value={prompt(sys.part)} title={`Copy the ${sys.title} agent prompt`} className="text-zinc-500 hover:text-zinc-200" />
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </>
@@ -394,6 +450,16 @@ function InstallBox({ snap, run }) {
 
 // the live status — one dense browser row (Chrome, port, screenshots, stats), then
 // a slim "wired up" row below. Both click through to their detail page.
+// a drawer that sticks out under a LiveCard — second grid row, pulled flush
+// against its parent card (inset past the card's corner radius, top border gone)
+function CardAttachment({ children, col }) {
+  return (
+    <div className={cn('-mt-3 self-start', col)}>
+      <div className="mx-4 rounded-b-xl border border-t-0 border-white/10 bg-zinc-900/70 px-4 pb-3 pt-3">{children}</div>
+    </div>
+  )
+}
+
 function ConsoleTiles({ snap, self, navigate }) {
   if (!snap) return (
     <div className="mt-4 inline-flex items-center gap-1.5 text-[12.5px] text-zinc-500"><span className="size-1.5 animate-pulse rounded-full bg-amber-400" /> reading your machine…</div>
@@ -403,10 +469,16 @@ function ConsoleTiles({ snap, self, navigate }) {
   const cfg = (snap.versions || {})['browser-config']
   const sessions = harness.sessions || 0
   const legacy = (harness.daemons || []).filter((d) => d.legacy).length
+  const stale = snap.staleAgents || { count: 0, sessions: [] }
+  const staleAttach = cfg?.upToDate === true && stale.count > 0
+  // green = the horse-browser wiring itself (rule installed + current); agents
+  // that predate the install are information (the drawer), not an amber state
   const wired = !cfg?.scriptAvailable
     ? { dot: 'bg-zinc-600', big: 'Not wired up yet', line: 'install horse-browser — the always-on rule ships in the package' }
     : cfg.upToDate === true
-      ? { dot: 'bg-emerald-400', big: 'Every agent knows it', line: <>the browser rule loads into <span className="text-zinc-400">every Claude Code session</span> on start — plus <code className="cl-mono">horse-browser skill</code> on demand</> }
+      ? (stale.count > 0
+        ? { dot: 'bg-emerald-400', big: 'Every new session knows it', line: <>the rule loads at <span className="text-zinc-400">session start</span> — the agents below are from before the install and haven’t reloaded it yet</> }
+        : { dot: 'bg-emerald-400', big: 'Every agent knows it', line: <>the browser rule loads into <span className="text-zinc-400">every Claude Code session</span> on start — plus <code className="cl-mono">horse-browser skill</code> on demand</> })
       : { dot: 'bg-amber-400', big: 'Rule drifted', line: 'the installed rule differs from the package’s RULE.md — reapply it' }
   const ss = snap.siteSkills || { hostCount: 0, fileCount: 0, hosts: [] }
   const ssBig = ss.fileCount > 0
@@ -414,17 +486,34 @@ function ConsoleTiles({ snap, self, navigate }) {
     : <span className="font-semibold text-zinc-50">No site skills yet</span>
   const ssSmall = ss.fileCount > 0
     ? <div className="cl-mono truncate text-zinc-500">{ss.hosts.slice(0, 4).map((h) => h.host).join(' · ')}{ss.hosts.length > 4 ? ' · …' : ''}</div>
-    : <div className="text-zinc-500">per-site playbooks agents read on arrival — quirks, selectors, login traps</div>
+    : <div className="text-zinc-500">nothing here yet — agents learn the web as they browse and bank what they figure out here. Check back later.</div>
   return (
-    <div className="mt-4 grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <BrowserCard cdp={cdp} sessions={sessions} legacy={legacy} self={self} navigate={navigate} />
-      <LiveCard dot={wired.dot} label="Wired up" cta="read the exact rule + manual"
-        big={<span className="font-semibold text-zinc-50">{wired.big}</span>}
-        small={<div className="text-zinc-500">{wired.line}</div>}
-        onClick={() => navigate('docs')} />
-      <LiveCard dot={ss.fileCount > 0 ? 'bg-emerald-400' : 'bg-zinc-600'} label="Site skills" cta="browse the per-site playbooks"
-        big={ssBig} small={ssSmall} onClick={() => navigate('site-skills')} />
-    </div>
+    <>
+      <div className="mt-4 grid grid-cols-1 items-stretch gap-3 lg:grid-cols-3">
+        <div className="lg:col-start-1 lg:row-start-1"><BrowserCard cdp={cdp} sessions={sessions} legacy={legacy} self={self} navigate={navigate} /></div>
+        <div className="lg:col-start-2 lg:row-start-1">
+          <LiveCard dot={wired.dot} label="Wired up" cta="read the exact rule + manual"
+            big={<span className="font-semibold text-zinc-50">{wired.big}</span>}
+            small={<div className="text-zinc-500">{wired.line}</div>}
+            onClick={() => navigate('docs')} />
+        </div>
+        {staleAttach && (
+          <CardAttachment col="lg:col-start-2 lg:row-start-2">
+            <div className="text-[12px] leading-snug text-zinc-400"><span className="text-amber-300">started before the install</span> — {stale.count === 1 ? 'this session hasn’t' : 'these sessions haven’t'} reloaded the rule yet. Nudge {stale.count === 1 ? 'it' : 'them'} (<code className="cl-mono text-zinc-300">horse-browser skill</code>) or restart:</div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {stale.sessions.map((s) => (
+                <span key={s.callsign} className="cl-mono inline-flex items-center gap-1 rounded bg-white/[0.06] px-1.5 py-0.5 text-[11px] font-bold" style={{ color: inkFor(s.color, true) }}>{s.emoji} {s.callsign}</span>
+              ))}
+              {stale.count > stale.sessions.length && <span className="text-[11px] text-zinc-600">+{stale.count - stale.sessions.length} more</span>}
+            </div>
+          </CardAttachment>
+        )}
+        <div className="lg:col-start-3 lg:row-start-1">
+          <LiveCard dot={ss.fileCount > 0 ? 'bg-emerald-400' : 'bg-zinc-600'} label="Site skills" cta={ss.fileCount > 0 ? 'browse the per-site playbooks' : 'they’ll appear as agents work'}
+            big={ssBig} small={ssSmall} onClick={() => navigate('site-skills')} />
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -448,7 +537,7 @@ function CopyCmd({ cmd }) {
 /* the compositing check — "do screenshots work right now", answered for real:
  * a timed 1×1 Page.captureScreenshot through the Horse Browser. Runs when the
  * page opens; the Recheck button runs it again. */
-function CompositingCheck({ self }) {
+function CompositingCheck({ self, installed = true }) {
   const [res, setRes] = useState(null)
   const [checking, setChecking] = useState(true)
   const run = () => {
@@ -473,7 +562,9 @@ function CompositingCheck({ self }) {
     : probe.status === 'ok' ? { tone: 'emerald', head: 'Screenshots work right now', sub: `a real 1×1 capture came back in ${probe.ms} ms` }
     : probe.status === 'hang' ? { tone: 'rose', head: 'Screenshots would hang', sub: d.asleep ? `the display is asleep${d.clamshell ? ' behind a closed lid' : ''} — nothing is compositing, so the capture never returned` : 'the display looks awake but nothing painted back within 3.5s — possibly a wedged GPU; the launcher heals that on its next run' }
     : probe.status === 'no-page' ? { tone: 'zinc', head: 'Browser up, no tab to probe', sub: 'no page tab is open — open any page and recheck' }
-    : { tone: 'zinc', head: 'The Horse Browser isn’t running', sub: 'nothing to capture from — the next agent task starts it, then recheck' }
+    : installed
+      ? { tone: 'zinc', head: 'The Horse Browser isn’t running', sub: 'nothing to capture from — the next agent task starts it, then recheck' }
+      : { tone: 'zinc', head: 'The Horse Browser isn’t installed', sub: 'nothing to capture from — install it from the board, then recheck' }
   const tones = {
     emerald: { dot: 'bg-emerald-400', text: 'text-emerald-300', ring: 'border-emerald-400/25', bg: 'bg-emerald-400/[0.05]' },
     rose:    { dot: 'bg-rose-400',    text: 'text-rose-300',    ring: 'border-rose-400/25',    bg: 'bg-rose-400/[0.05]' },
@@ -516,6 +607,7 @@ function CompositingCheck({ self }) {
 
 // the DeskPad side: what must be true for screenshots to survive a closed lid
 function DeskPadCard({ snap, byId, run }) {
+  const horse = !!snap?.tools?.['horse-browser']?.installed
   const dp = snap?.deskpad
   const d = (dp && dp.display) || {}
   const virtualUp = (d.external || 0) > 0
@@ -545,11 +637,13 @@ function DeskPadCard({ snap, byId, run }) {
         ))}
       </div>
       <div className="mt-4 space-y-2">
-        {!dp?.installed && (
+        {!horse && !dp?.installed && (
+          <span className="text-[12px] text-zinc-500">install horse-browser first — then set up the virtual display from here or the board</span>
+        )}
+        {horse && !dp?.installed && (
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => run && run('install-deskpad', { confirm: true })} className="rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>Install via brew</button>
-            <span className="text-[11px] text-zinc-600">or</span>
             <CopyCmd cmd="brew install --cask deskpad" />
+            <span className="text-[11px] text-zinc-500">— run it yourself or hand setup to an agent (board, top right)</span>
           </div>
         )}
         {dp?.installed && !dp?.running && (
@@ -567,7 +661,6 @@ function DeskPadCard({ snap, byId, run }) {
         <Icon name="shield-check" size={14} className="mt-0.5 shrink-0 text-emerald-400/80" />
         <span>audited before recommending: <span className="text-zinc-300">436 lines, all read</span> — MIT, open source, App-Sandboxed with <span className="text-zinc-300">no network entitlement</span>, so macOS itself forbids it from phoning home. Its one permission (Screen Recording) mirrors only its own virtual display.</span>
       </div>
-      <ActionConsole entry={(byId && byId['install-deskpad']) || {}} title="installing DeskPad via brew" />
       <ActionConsole entry={(byId && byId['launch-deskpad']) || {}} title="launching DeskPad" />
     </div>
   )
@@ -688,6 +781,7 @@ function ProcessWall({ self }) {
                 <span className="cl-mono shrink-0 font-bold" style={{ color: inkFor(s.color, true) }}>{s.callsign}</span>
                 <span className="truncate text-zinc-500">{s.cwd ? s.cwd.split('/').filter(Boolean).pop() : ''}</span>
                 {s.active && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" title="working now" />}
+                {s.preRule && <span className="shrink-0 rounded bg-amber-400/10 px-1 text-[9px] font-semibold text-amber-400" title="started before the browser rule was applied — this session doesn't know the browser yet; nudge it (horse-browser skill) or restart it">pre-rule</span>}
               </div>
               <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 px-4 py-2.5 text-[12px]">
                 {ds.length ? ds.map((d) => (
@@ -844,7 +938,7 @@ function SectionLabel({ children, hint }) {
  * The full-bleed banner: brand + a live indicator + the "read the full story"
  * link bottom-left, and the install/version box floated top-right (a distinct
  * dark card — install is kept separate from the live-status panels below). */
-function Hero({ snap, navigate, img, run }) {
+function Hero({ snap, self, navigate, img, fresh = false }) {
   return (
     <Reveal className="relative -mx-6 -mt-6 mb-12 overflow-hidden lg:-mx-10 lg:-mt-10">
       <div className="relative flex min-h-[24rem] items-center sm:min-h-[26rem]">
@@ -858,48 +952,154 @@ function Hero({ snap, navigate, img, run }) {
             <h1 className="text-[26px] font-semibold leading-none tracking-tight text-white sm:text-[30px]">A browser your agents drive</h1>
             <p className="mt-2 max-w-md text-[13px] leading-snug text-zinc-300">Logged in, never in your way — a second browser just for agents. This is its control board.</p>
             <div className="mt-3.5">
-              <button onClick={() => navigate('story')} className="group inline-flex items-center gap-1.5 text-[12.5px] font-medium text-zinc-300 transition hover:text-white">
-                Read the full story <span className="text-zinc-500 transition group-hover:translate-x-0.5 group-hover:text-zinc-300">→</span>
-              </button>
+              {/* fresh machine (guide below): the story is the pitch — give it a real button */}
+              {fresh ? (
+                <button onClick={() => navigate('story')} className="group inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-[13px] font-semibold text-white backdrop-blur-sm transition hover:border-white/35 hover:bg-white/15">
+                  Read the full story <span className="transition group-hover:translate-x-0.5">→</span>
+                </button>
+              ) : (
+                <button onClick={() => navigate('story')} className="group inline-flex items-center gap-1.5 text-[12.5px] font-medium text-zinc-300 transition hover:text-white">
+                  Read the full story <span className="text-zinc-500 transition group-hover:translate-x-0.5 group-hover:text-zinc-300">→</span>
+                </button>
+              )}
             </div>
           </div>
-          <div className="shrink-0"><InstallBox snap={snap} run={run} /></div>
+          {/* the box is THE install surface: state, the command, and the setup wizard */}
+          <div className="shrink-0"><InstallBox snap={snap} self={self} navigate={navigate} /></div>
         </div>
       </div>
     </Reveal>
   )
 }
 
+/* ── first-run setup guide — replaces the live board until the stack exists ──
+ * Shows while horse-browser, its venv, or the agent rule are missing; once
+ * those are green it's gone for good (a later rule DRIFT stays a board matter —
+ * the amber "Wired up" card — and never collapses the board back to this).
+ * The two optional rows (broker, lid-closed vision) don't hold it open. */
+function SetupGuide({ snap, self, run, byId, navigate }) {
+  const tools = snap.tools || {}
+  const horse = !!tools['horse-browser']?.installed
+  const npmOk = !!tools.npm?.installed
+  const harnessOk = !!snap.harness?.installed
+  const hb = (snap.versions || {})['horse-browser']
+  const cfg = (snap.versions || {})['browser-config']
+  const ruleDoc = snap.agentDocs?.docs?.find((d) => d.kind === 'rule')
+  const wired = !!ruleDoc?.exists && cfg?.upToDate !== false
+  const dp = snap.deskpad || {}
+  // the broker is the one live bit the snapshot doesn't carry
+  const [bw, setBw] = useState(null)
+  useEffect(() => {
+    let alive = true
+    fetch(self.api + '/broker/status').then((r) => r.json()).then((d) => { if (alive) setBw(d) }).catch(() => {})
+    const unsub = self.subscribe((f) => { if (f.type === 'broker-status' && f.status && alive) setBw(f.status) })
+    return () => { alive = false; unsub && unsub() }
+  }, [])
+  const bv = bw?.vault || {}
+  const bwReady = !!(bw?.installed && bv.hasSession && bv.bwStatus !== 'no-cli' && bv.bwStatus !== 'unauthenticated')
+  const bwDone = bwReady && (bw?.granted || 0) > 0
+  const A = ({ onClick, children }) => (
+    <button onClick={onClick} className="shrink-0 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>{children}</button>
+  )
+  // installing is the AGENT's job (the top-right box has the command + the
+  // setup-skill prompt) — this list is the live checklist both of you watch
+  const steps = [
+    {
+      n: '1', title: 'Install the browser', label: 'horse-browser · npm', done: horse && harnessOk,
+      sub: 'one npm package — the launcher, the tab-grouper extension, and the vendored harness',
+      state: horse && harnessOk ? (hb?.version ? `v${hb.version} · harness ready` : 'installed')
+        : horse ? 'installed · harness venv missing' : npmOk ? 'not installed' : 'not installed · no node found',
+    },
+    {
+      n: '2', title: 'Wire up your agents', done: wired,
+      sub: 'the always-on rule file — every Claude Code session learns the browser exists',
+      state: wired ? 'loads into every session'
+        : !cfg?.scriptAvailable ? 'applies automatically with the install'
+        : ruleDoc?.exists ? 'installed rule is outdated' : 'not applied yet',
+      action: !wired && cfg?.scriptAvailable ? <A onClick={() => run && run('install-browser-config', { confirm: true })}>Apply the rule</A> : null,
+    },
+    {
+      n: '3', title: 'Give agents logins', optional: true, done: bwDone, locked: !(horse && harnessOk),
+      sub: 'the Bitwarden broker — sign-ins where the secret never enters the model',
+      state: !bw ? 'checking…' : bwDone ? `${bw.granted} collection${bw.granted === 1 ? '' : 's'} granted`
+        : !bw.installed ? 'daemon not built' : !bwReady ? 'vault not connected' : 'nothing granted yet',
+      action: bwDone ? null : <A onClick={() => navigate('setup/credentials')}>Set up →</A>,
+    },
+    {
+      n: '4', title: 'Survive a closed lid', optional: true, done: !!(dp.installed && dp.running), locked: !(horse && harnessOk),
+      sub: 'DeskPad keeps a virtual display compositing, so screenshots never hang',
+      state: dp.installed && dp.running ? 'DeskPad running' : dp.installed ? 'installed, not running' : 'not installed',
+      action: dp.installed && dp.running ? null : <A onClick={() => navigate('setup/display')}>Set up →</A>,
+    },
+  ]
+  return (
+    <Reveal>
+      <SectionLabel hint="in order, top to bottom — copy the agent prompt (top right) and watch these turn green">Set up</SectionLabel>
+      <div className="mt-4 divide-y divide-white/[0.06] rounded-2xl border border-white/10 bg-white/[0.02]">
+        {steps.map((s) => (
+          <div key={s.n} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
+            <span className={cn('cl-mono w-5 shrink-0 text-center text-[14px] font-bold', s.done ? 'text-emerald-400' : 'text-zinc-600')}>{s.done ? '✓' : s.n}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn('text-[14.5px] font-semibold', s.done ? 'text-zinc-400' : 'text-zinc-100')}>{s.title}</span>
+                {s.label && <span className="cl-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-600">{s.label}</span>}
+                {s.optional && <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.1em] text-zinc-500">optional</span>}
+              </div>
+              <div className="mt-0.5 text-[12.5px] leading-snug text-zinc-500">{s.sub}</div>
+              {!s.done && !s.locked && s.cmd && <div className="mt-2.5"><CopyCmd cmd={s.cmd} /></div>}
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <span className={cn('inline-flex items-center gap-1.5 text-[12px]', s.done ? 'text-emerald-300' : s.busy ? 'text-amber-300' : 'text-zinc-500')}>
+                <span className={cn('size-1.5 rounded-full', s.done ? 'bg-emerald-400' : s.busy ? 'animate-pulse bg-amber-400' : 'bg-zinc-600')} />{s.state}
+              </span>
+              {/* actions stay unoffered until step 1 is done — quietly, not as a lock */}
+              {!s.locked && s.action}
+            </div>
+          </div>
+        ))}
+      </div>
+      <ActionConsole entry={(byId && byId['install-browser-config']) || {}} title="applying the browser rule" />
+    </Reveal>
+  )
+}
+
 /* ────────────────────────────── the board ──────────────────────────────────
  * The default route: a lean control board — a live-status row up top, then the
- * credentials/access dashboard. Each tile/link opens a detail page. */
+ * credentials/access dashboard. Each tile/link opens a detail page. Until the
+ * stack exists (fresh machine), both are replaced by the setup guide. */
 function Board({ snap, self, navigate, actions, img }) {
   const { byId, run } = actions || {}
+  const ruleDoc = snap?.agentDocs?.docs?.find((d) => d.kind === 'rule')
+  const stackReady = !!snap && !!snap.tools?.['horse-browser']?.installed && !!snap.harness?.installed && !!ruleDoc?.exists
 
   return (
     <>
-      {/* the hero carries the install/version box, top-right */}
-      <Hero snap={snap} navigate={navigate} img={img} run={run} />
+      {/* the hero carries the install/version box top-right — install itself is
+          an agent task (the box holds the command + the setup-skill prompt) */}
+      <Hero snap={snap} self={self} navigate={navigate} img={img} fresh={!!snap && !stackReady} />
 
-      {/* the action consoles for the install box's buttons live just under the hero */}
-      <ActionConsole entry={(byId && byId['install-horse-browser']) || {}} title="installing horse-browser from npm" />
-      <ActionConsole entry={(byId && byId['harness-setup']) || {}} title="building the harness venv" />
+      {!snap ? (
+        <div className="mt-4 inline-flex items-center gap-1.5 text-[12.5px] text-zinc-500"><span className="size-1.5 animate-pulse rounded-full bg-amber-400" /> reading your machine…</div>
+      ) : !stackReady ? (
+        <SetupGuide snap={snap} self={self} run={run} byId={byId} navigate={navigate} />
+      ) : (
+        <>
+          {/* live status — clickable tiles into the detail pages */}
+          <Reveal>
+            <SectionLabel hint="live from this machine — click through for the detail">Live status</SectionLabel>
+            <ConsoleTiles snap={snap} self={self} navigate={navigate} />
+          </Reveal>
 
-      {/* live status — clickable tiles into the detail pages */}
-      <Reveal>
-        <SectionLabel hint="live from this machine — click through for the detail">Live status</SectionLabel>
-        <ConsoleTiles snap={snap} self={self} navigate={navigate} />
-      </Reveal>
-
-      {/* credentials & access — the whole auth system, live, on the board */}
-      <Reveal>
-        <div className="mt-12 sm:mt-14">
-          <SectionLabel hint="how agents sign in — the secret never enters the model">Credentials &amp; access</SectionLabel>
-          {/* AuthPanel warms/slides the vault on mount so hints are ready for agents. */}
-          <AuthPanel self={self} navigate={navigate} />
-          <ActionConsole entry={(byId && byId['install-browser-config']) || {}} title="applying the browser rule" />
-        </div>
-      </Reveal>
+          {/* credentials & access — the whole auth system, live, on the board */}
+          <Reveal>
+            <div className="mt-12 sm:mt-14">
+              <SectionLabel hint="how agents sign in — the secret never enters the model">Credentials &amp; access</SectionLabel>
+              {/* AuthPanel warms/slides the vault on mount so hints are ready for agents. */}
+              <AuthPanel self={self} navigate={navigate} />
+            </div>
+          </Reveal>
+        </>
+      )}
     </>
   )
 }
@@ -917,7 +1117,7 @@ function Runtime({ snap, self, navigate, actions }) {
 
       <Reveal className="@container">
         <SectionLabel hint="can agents SEE right now — a real screenshot probe, even lid-closed">Agent vision</SectionLabel>
-        <CompositingCheck self={self} />
+        <CompositingCheck self={self} installed={horseInstalled} />
         <div className="mt-6 grid grid-cols-1 items-start gap-x-12 gap-y-8 @4xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)]">
           <DeskPadCard snap={snap} byId={byId} run={run} />
           {/* the closed-lid reasoning — it belongs here with vision, not in the marketing story */}
@@ -1032,9 +1232,8 @@ const VERB_DESC = {
   challenge_cleared: 'Check whether an anti-bot challenge has cleared.',
   type_secret: 'The broker types a vault password into a field — returns a char count, never the value.',
   type_totp: 'The broker types the current 2FA code into a field.',
-  get_secret: 'Return a secret for non-web (CLI/env) use — a macOS approval each time; never print it.',
-  get_totp: 'Return the current TOTP code for non-web use.',
-  creds: 'List the logins you’re allowed to use — your allow-list.',
+  get_totp: 'Return the current self-expiring TOTP code — the fallback for broken 2FA widgets type_totp can’t drive.',
+  list_login_profiles: 'List the logins you’re allowed to use — your allow-list (safe, non-secret metadata).',
   obs_install: 'Install network + JS-error capture on the page.',
   obs_dump: 'Dump the captured network requests and console errors.',
   scroll_to: 'Scroll an element into view.',
@@ -1065,7 +1264,10 @@ function VerbList({ items }) {
     </div>
   )
 }
-function Docs({ snap, self, navigate }) {
+function Docs({ snap, self, navigate, actions }) {
+  const { byId, run } = actions || {}
+  const horseInstalled = !!snap?.tools?.['horse-browser']?.installed
+  const cfg = (snap?.versions || {})['browser-config']
   const ruleDoc = snap?.agentDocs?.docs?.find((d) => d.kind === 'rule')
   const authDoc = snap?.agentDocs?.docs?.find((d) => d.kind === 'auth-rule')
   const manualDoc = snap?.agentDocs?.docs?.find((d) => d.kind === 'manual')
@@ -1131,8 +1333,18 @@ function Docs({ snap, self, navigate }) {
               <DocFolder><b className="font-semibold text-zinc-400">~/.claude/rules/</b> — always-on, loaded into every session</DocFolder>
               <DocNode name="horse-browser.md" origin="npm"
                 desc="the browsing rule + the verb index — how to drive the browser, what the paved verbs are"
-                meta={stat(ruleDoc)} warn={ruleDoc && !ruleDoc.exists ? 'not applied yet — apply it from the board’s “What agents know” tile' : null}
-                action={readBtn(ruleDoc)} />
+                meta={stat(ruleDoc)}
+                warn={ruleDoc && !ruleDoc.exists ? (cfg?.scriptAvailable ? 'not applied yet' : 'ships with horse-browser — install it from the board first')
+                  : ruleDoc?.exists && cfg?.upToDate === false ? 'the installed rule differs from the package’s RULE.md' : null}
+                action={<>
+                  {cfg?.scriptAvailable && (!ruleDoc?.exists || cfg.upToDate === false) && (
+                    <button onClick={() => run && run('install-browser-config', { confirm: true })}
+                      className="cl-mono shrink-0 rounded-full px-2.5 py-0.5 text-[10.5px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>
+                      {ruleDoc?.exists ? 'Reapply' : 'Apply'}
+                    </button>
+                  )}
+                  {readBtn(ruleDoc)}
+                </>} />
               <DocNode last name="horse-browser-auth.md" origin="module"
                 desc="the credential rule — use the broker, never type a secret yourself; auto / ask / never is the broker’s call"
                 meta={stat(authDoc)} warn={authDoc && !authDoc.exists ? 'not installed yet — set up the broker' : null}
@@ -1140,14 +1352,16 @@ function Docs({ snap, self, navigate }) {
               <DocFolder><b className="font-semibold text-zinc-400">on demand</b> · <code className="cl-mono rounded bg-white/[0.08] px-1.5 py-0.5 text-[11px] text-zinc-200">horse-browser skill</code> — pulled only when an agent needs the depth</DocFolder>
               <DocNode last name="MANUAL.md" origin="npm"
                 desc="every verb with the raw CDP it runs, the challenge playbook, extension internals, diagnostics"
-                meta={stat(manualDoc)} action={readBtn(manualDoc)} />
+                meta={stat(manualDoc)} warn={manualDoc?.exists ? null : 'ships with the npm package — installs with horse-browser'}
+                action={readBtn(manualDoc)} />
             </DocLayer>
+            <ActionConsole entry={(byId && byId['install-browser-config']) || {}} title="applying the browser rule" />
 
             <DocLayer num="L2" title="The verbs — every command an agent can call"
               desc="The Python an agent actually calls — each verb is a thin wrapper over one Chrome DevTools Protocol command, so it drives Chrome directly rather than through pre-built buttons. Three tiers merge into one namespace, loaded last-wins: core, then plugins, then your own file."
               scan={<><code className="cl-mono rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] text-zinc-200">horse-browser verbs --json</code><span className="text-zinc-600">·</span><span className="text-zinc-400">live from the harness</span></>}>
               {verbRows == null ? <div className="py-3 text-[12.5px] text-zinc-500">reading the harness…</div>
-                : l2body.length === 0 ? <div className="py-3 text-[12.5px] text-zinc-500">no verbs found — is horse-browser installed?</div>
+                : l2body.length === 0 ? <div className="py-3 text-[12.5px] text-zinc-500">{horseInstalled ? 'no verbs found — try reopening this page' : 'horse-browser isn’t installed — the core verbs ship with it'}</div>
                 : l2body}
               <div className="mt-6 rounded-xl border border-white/[0.07] bg-white/[0.015] px-5 py-4 text-[12.5px] leading-relaxed text-zinc-400">
                 <span className="font-semibold text-zinc-200">How they load &amp; who wins.</span> Each call loads <span className="text-zinc-300">core</span> first, then every <span className="text-zinc-300">plugin</span> in <code className="cl-mono text-[11.5px] text-zinc-300">plugins/</code>, then your <span className="text-zinc-300">local</span> <code className="cl-mono text-[11.5px] text-zinc-300">agent_helpers.py</code> — and the last definition of a name wins. So <span className="text-zinc-300">your file overrides anything</span>: write the one verb you need and it takes precedence. Safe even for the broker verbs — their security is enforced in the daemon, not in the Python.
@@ -1286,6 +1500,109 @@ function SiteSkills({ self, navigate, snap }) {
   )
 }
 
+/* ─────────────────────────── subpage: setup wizard ──────────────────────────
+ * Hand setup to an agent. The norm: ONE prompt sets up the whole system; each
+ * of the three groups (browser / credentials / display) can also be handed
+ * over alone. Every prompt points at /setup.md — generated live with this
+ * machine's state — and the agent verifies against the board's endpoints. */
+function SetupWizard({ snap, self, navigate, focus }) {
+  const [bw, setBw] = useState(null)
+  const [docs, setDocs] = useState({})
+  // deep link: /setup/<part> lands scrolled to that group's section. The manual
+  // markdown arrives async and inflates the sections ABOVE the target, so an
+  // early scroll gets pushed off — re-anchor (instantly) each time docs land.
+  useEffect(() => {
+    if (!focus) return
+    const t = setTimeout(() => { document.getElementById('setup-' + focus)?.scrollIntoView({ block: 'start' }) }, 120)
+    return () => clearTimeout(t)
+  }, [focus, docs])
+  useEffect(() => {
+    let alive = true
+    fetch(self.api + '/broker/status').then((r) => r.json()).then((d) => { if (alive) setBw(d) }).catch(() => {})
+    // each section renders the SAME markdown the agent reads (?bare=1 = steps only) — no drift
+    for (const p of ['browser', 'credentials', 'display']) {
+      fetch(self.api + '/setup.md?part=' + p + '&bare=1').then((r) => r.text()).then((t) => { if (alive) setDocs((d) => ({ ...d, [p]: t })) }).catch(() => {})
+    }
+    const unsub = self.subscribe((f) => { if (f.type === 'broker-status' && f.status && alive) setBw(f.status) })
+    return () => { alive = false; unsub && unsub() }
+  }, [])
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const skillUrl = (p) => origin + self.api + '/setup.md' + (p ? '?part=' + p : '')
+  const prompt = (p) => `I'm giving you a skill — read it and use it: ${skillUrl(p)}`
+  const horse = !!snap?.tools?.['horse-browser']?.installed
+  const venv = !!snap?.harness?.installed
+  const ruleOk = !!snap?.agentDocs?.docs?.find((d) => d.kind === 'rule')?.exists
+  const hb = (snap?.versions || {})['horse-browser']
+  const bv = bw?.vault || {}
+  const vaultOk = !!bv.hasSession && bv.bwStatus !== 'unauthenticated' && bv.bwStatus !== 'no-cli'
+  const dp = snap?.deskpad || {}
+  const Row = ({ ok, children }) => (
+    <div className="flex items-center gap-2 text-[12.5px]"><span className={cn('size-1.5 shrink-0 rounded-full', ok ? 'bg-emerald-400' : 'bg-zinc-600')} /><span className={ok ? 'text-zinc-300' : 'text-zinc-500'}>{children}</span></div>
+  )
+  const groups = [
+    { key: 'browser', title: 'Horse Browser', done: horse && venv && ruleOk,
+      rows: [[horse && venv, horse && venv ? `browser + harness installed${hb?.version ? ` (v${hb.version})` : ''}` : 'browser package + harness'], [ruleOk, 'agents wired (always-on rule)']] },
+    { key: 'credentials', title: 'Bitwarden credentials', optional: true, done: !!bw?.installed && vaultOk && (bw?.granted || 0) > 0,
+      rows: [[!!bw?.installed, 'broker daemon'], [vaultOk, 'vault connected'], [(bw?.granted || 0) > 0, 'collections granted']] },
+    { key: 'display', title: 'Lid-closed display', optional: true, done: !!(dp.installed && dp.running),
+      rows: [[!!dp.installed, 'DeskPad installed'], [!!dp.running, 'running']] },
+  ]
+  const allDone = groups.every((g) => g.done)
+  return (
+    <>
+      <button onClick={() => navigate('')} className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition hover:text-zinc-100">← back to the board</button>
+      <div className="mx-auto max-w-4xl">
+        <Reveal>
+          <div className="cl-mono text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: ACCENT }}>agent-run setup</div>
+          <h1 className="mt-2.5 text-[27px] font-semibold leading-tight tracking-tight text-zinc-50 sm:text-[32px]">Hand it to an agent</h1>
+          <p className="mt-3 max-w-[66ch] text-[15px] leading-relaxed text-zinc-400">Copy one prompt into any Claude Code session. The agent installs everything <span className="text-zinc-200">its own way</span> — whatever node, shell, or package manager this machine uses — and verifies each step against this board, so you can watch the states turn green. Two moments stay yours: your Bitwarden <span className="text-zinc-200">master password</span> and the <span className="text-zinc-200">macOS permission prompts</span>.</p>
+
+          {/* the norm — one prompt, the whole system */}
+          <div className="mt-6 rounded-2xl border p-5" style={{ borderColor: ACCENT + '55', background: ACCENT + '0e' }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[15.5px] font-semibold text-zinc-50">Set up the whole system</div>
+              {allDone && <span className="inline-flex items-center gap-1.5 text-[12px] text-emerald-300"><span className="size-1.5 rounded-full bg-emerald-400" />all set on this machine</span>}
+            </div>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-400">Paste this into any Claude Code session, then watch this page turn green.</p>
+            <div className="mt-3 flex items-center gap-3 rounded-xl border border-white/10 bg-black/40 px-4 py-3">
+              <code className="cl-mono min-w-0 flex-1 truncate text-[12px] text-zinc-300">{prompt()}</code>
+              <CopyBoom value={prompt()} title="Copy the full setup prompt" />
+            </div>
+          </div>
+
+          {/* …or hand over one group at a time — each section IS the manual the
+              agent reads, rendered, with the live state on top */}
+          <div className="mt-5 space-y-4">
+            {groups.map((g) => (
+              /* no overflow-hidden — the copy booms must escape the card; the header band rounds its own top corners */
+              <section key={g.key} id={'setup-' + g.key} className="scroll-mt-6 rounded-2xl border border-white/10 bg-white/[0.02]">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-t-2xl border-b border-white/[0.07] bg-white/[0.015] px-5 py-3.5">
+                  <span className={cn('size-2 shrink-0 rounded-full', g.done ? 'bg-emerald-400' : 'bg-zinc-600')} />
+                  <span className="text-[15px] font-semibold text-zinc-100">{g.title}</span>
+                  {g.optional && <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-zinc-500">optional</span>}
+                  <div className="ml-auto flex items-center gap-3.5">
+                    <a href={skillUrl(g.key)} target="_blank" rel="noreferrer" className="cl-mono text-[10.5px] text-zinc-600 transition hover:text-zinc-300">skill ↗</a>
+                    <span className="inline-flex items-center gap-2 text-[11px] text-zinc-400">copy prompt for only this step <CopyBoom value={prompt(g.key)} title={`Copy the ${g.title} setup prompt — just this step`} /></span>
+                  </div>
+                </div>
+                <div className="px-5 pb-4 pt-3">
+                  <div className="flex flex-wrap gap-x-5 gap-y-1.5">{g.rows.map(([ok, label], i) => <Row key={i} ok={ok}>{label}</Row>)}</div>
+                  <div className="mt-2 border-t border-white/[0.05] pt-1">
+                    {docs[g.key] ? <Markdown text={docs[g.key]} /> : <div className="py-3 text-[12px] text-zinc-600">reading the manual…</div>}
+                  </div>
+                </div>
+              </section>
+            ))}
+          </div>
+
+          <p className="mt-6 text-[12.5px] leading-relaxed text-zinc-500">Each prompt points at <a href={skillUrl()} target="_blank" rel="noreferrer" className="cl-mono text-zinc-400 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-200">setup.md</a> — the manual, generated live with this machine's current state, including where the agent must stop and hand over to you.</p>
+        </Reveal>
+      </div>
+      <div className="mx-auto mt-12 max-w-4xl"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
+    </>
+  )
+}
+
 /* ────────────────────────────── the story ──────────────────────────────────
  * The full cinematic narrative, moved behind the hero's "read the full story"
  * link: banner → idea → the demo agent-browser wall → the engine + bitter
@@ -1375,8 +1692,9 @@ export default function Module() {
   else if (path === 'accounts') body = <Accounts self={self} navigate={navigate} />
   else if (path === 'activity') body = <Activity self={self} navigate={navigate} />
   else if (path === 'runtime') body = <Runtime snap={snap} self={self} navigate={navigate} actions={actions} />
-  else if (path === 'docs') body = <Docs snap={snap} self={self} navigate={navigate} />
+  else if (path === 'docs') body = <Docs snap={snap} self={self} navigate={navigate} actions={actions} />
   else if (path === 'site-skills') body = <SiteSkills snap={snap} self={self} navigate={navigate} />
+  else if (path === 'setup' || path.startsWith('setup/')) body = <SetupWizard snap={snap} self={self} navigate={navigate} focus={path.split('/')[1] || null} />
   else body = <Board snap={snap} self={self} navigate={navigate} actions={actions} img={img} />
 
   return (

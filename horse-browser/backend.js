@@ -1,7 +1,8 @@
 /* horse-browser — backend.
  *
  * Instruments read the REAL machine and report it live: the horse-browser CDP
- * on :9223 (version, tab count, PID), the horse-harness daemons (each one an
+ * (HB_CDP_PORT, default 9223 — 0.9.7 gives each browser its own port), the
+ * version, tab count, PID, the horse-harness daemons (each one an
  * agent session driving the browser, matched back to its session via the
  * HORSE_SESSION env), the running Claude sessions (as codenames, with cwd),
  * and the tab→session map from the tab-grouper extension. Hands: install/
@@ -23,13 +24,17 @@ import path from 'node:path'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mountCredentials } from './credentials.js'
+import { brokerInstalled, SETUP_CMD, INSTALL as BROKER_INSTALL } from './broker.js'
 
 const execFileP = promisify(execFile)
 const HOME = os.homedir()
 const PROJECTS_DIR = path.join(HOME, '.claude', 'projects')
 const UUID_JSONL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/
 const UUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
-const CDP = `http://127.0.0.1:${process.env.HB_CDP_PORT || '9223'}`
+// The one CDP port for this instance — every reader derives from it (0.9.7+
+// gives each browser its own port; nothing may assume 9223).
+const CDP_PORT = Number(process.env.HB_CDP_PORT || 9223)
+const CDP = `http://127.0.0.1:${CDP_PORT}`
 const HB_NPM = '@pa1nd/horse-browser'
 const DESKPAD_APP = '/Applications/DeskPad.app'
 const HB_RULES_MD = path.join(HOME, '.claude', 'rules', 'horse-browser.md')
@@ -67,6 +72,13 @@ function findOnPath(name) {
   const dirs = [
     ...(process.env.PATH || '').split(':'),
     path.join(HOME, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin',
+    // node version managers with STABLE bin dirs — so npm/node resolve even when
+    // atelier runs under a managed launcher whose PATH never saw a shell init
+    // (nvm has no stable symlink; nvm users start servers from shells anyway)
+    path.join(HOME, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
+    path.join(HOME, '.volta', 'bin'),
+    path.join(HOME, '.asdf', 'shims'),
+    '/opt/local/bin',
   ]
   for (const d of dirs) {
     if (!d) continue
@@ -77,7 +89,7 @@ function findOnPath(name) {
 }
 
 async function cdpInfo() {
-  const out = { up: false, browser: null, protocol: null, port: Number(process.env.HB_CDP_PORT || 9223), tabs: 0, tabSample: [], pids: [] }
+  const out = { up: false, browser: null, protocol: null, port: CDP_PORT, tabs: 0, tabSample: [], pids: [] }
   try {
     const r = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(1500) })
     if (r.ok) {
@@ -103,7 +115,7 @@ async function cdpInfo() {
         })
       }
     } catch {}
-    out.pids = await listeningPids(9223)
+    out.pids = await listeningPids(CDP_PORT)
   }
   return out
 }
@@ -111,13 +123,12 @@ async function cdpInfo() {
 // ask the horse-browser tab-grouper extension which open tabs belong to which session group
 // (a group's title ends in the session's callsign). Returns a { targetId: callsign } map. Chrome's
 // CDP exposes no tab→group link, but the extension's service worker does.
-async function tabGroups() {
+// Evaluate an async expression in one extension service worker over its own CDP WS.
+// Returns { value } on success or null on any failure (wrong worker, no permission, timeout).
+async function swEval(swUrl, expr) {
   let ws
   try {
-    const targets = await fetchJson(`${CDP}/json/list`, 2000)
-    const sw = (Array.isArray(targets) ? targets : []).find((t) => t.type === 'service_worker' && /chrome-extension/.test(t.url || ''))
-    if (!sw || !sw.webSocketDebuggerUrl) return {}
-    ws = new WebSocket(sw.webSocketDebuggerUrl)
+    ws = new WebSocket(swUrl)
     await new Promise((res, rej) => { ws.addEventListener('open', res); ws.addEventListener('error', () => rej(new Error('ws'))); setTimeout(() => rej(new Error('timeout')), 2000) })
     let mid = 0
     const send = (method, params) => new Promise((res, rej) => {
@@ -126,24 +137,38 @@ async function tabGroups() {
       ws.addEventListener('message', handler)
       ws.send(JSON.stringify({ id, method, params }))
     })
-    // group titles look like "🥕 AE14" — the last 4 chars are the session callsign. Map each group's
-    // tabs to their CDP target id via chrome.debugger.getTargets (tabId → target).
-    const expr = `(async () => {
-      const dbg = await chrome.debugger.getTargets()
-      const tgt = {}; for (const d of dbg) if (d.tabId) tgt[d.tabId] = d.id
-      const groups = await chrome.tabGroups.query({})
-      const out = {}
-      for (const g of groups) {
-        const cs = (g.title || '').trim().slice(-4).toUpperCase()
-        const tabs = await chrome.tabs.query({ groupId: g.id })
-        for (const t of tabs) { const id = tgt[t.id]; if (id) out[id] = cs }
-      }
-      return out
-    })()`
     const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
-    return (r.result && r.result.result && r.result.result.value) || {}
-  } catch { return {} }
+    if (r.result && r.result.exceptionDetails) return null   // wrong worker (e.g. chrome.tabGroups undefined)
+    return r.result && r.result.result ? { value: r.result.result.value } : null
+  } catch { return null }
   finally { try { ws && ws.close() } catch {} }
+}
+async function tabGroups() {
+  const targets = await fetchJson(`${CDP}/json/list`, 2000).catch(() => [])
+  // A profile can host OTHER extensions' service workers — pick ours by trying each
+  // until one answers with our tab-grouper API (0.9.7: the launcher's extension is
+  // no longer guaranteed to be the first worker in the list).
+  const workers = (Array.isArray(targets) ? targets : []).filter((t) => t.type === 'service_worker' && /chrome-extension/.test(t.url || '') && t.webSocketDebuggerUrl)
+  // group titles look like "🥕 AE14" — the last 4 chars are the session callsign. Map each group's
+  // tabs to their CDP target id via chrome.debugger.getTargets (tabId → target).
+  const expr = `(async () => {
+    if (!chrome.tabGroups || !chrome.debugger) throw new Error('not the tab-grouper')
+    const dbg = await chrome.debugger.getTargets()
+    const tgt = {}; for (const d of dbg) if (d.tabId) tgt[d.tabId] = d.id
+    const groups = await chrome.tabGroups.query({})
+    const out = {}
+    for (const g of groups) {
+      const cs = (g.title || '').trim().slice(-4).toUpperCase()
+      const tabs = await chrome.tabs.query({ groupId: g.id })
+      for (const t of tabs) { const id = tgt[t.id]; if (id) out[id] = cs }
+    }
+    return out
+  })()`
+  for (const w of workers) {
+    const r = await swEval(w.webSocketDebuggerUrl, expr)
+    if (r && r.value && typeof r.value === 'object') return r.value   // ours answered
+  }
+  return {}
 }
 
 /* ── display & health (agent vision) ──────────
@@ -288,11 +313,29 @@ function listSessions() {
       if (age > RECENT_MS) continue
       const id = f.replace(/\.jsonl$/, '')
       const cwd = sessionCwd(full)
-      out.push({ ...codename(id), mtime: st.mtimeMs, age, active: age <= ACTIVE_MS, cwd: cwd ? cwd.replace(HOME, '~') : null })
+      out.push({ ...codename(id), mtime: st.mtimeMs, startMs: st.birthtimeMs || st.ctimeMs, age, active: age <= ACTIVE_MS, cwd: cwd ? cwd.replace(HOME, '~') : null })
     }
   }
   out.sort((a, b) => b.mtime - a.mtime)
   return out
+}
+// the snapshot and the processes builder both want the session list each tick —
+// one 2s memo instead of walking the transcripts (and tailing for cwd) twice
+let _sessCache = { at: 0, v: [] }
+function listSessionsCached() {
+  if (Date.now() - _sessCache.at > 2000) _sessCache = { at: Date.now(), v: listSessions() }
+  return _sessCache.v
+}
+
+/* Rules load when a session STARTS — so agents already running when the rule
+ * file lands (or gets updated) are flying blind until nudged or restarted.
+ * A session's transcript birthtime approximates its start. */
+function ruleMtimeMs() { try { return fs.statSync(HB_RULES_MD).mtimeMs } catch { return 0 } }
+function staleAgents() {
+  const rm = ruleMtimeMs()
+  if (!rm) return { count: 0, sessions: [] }
+  const stale = listSessionsCached().filter((s) => s.age <= RUNNING_MS && s.startMs && s.startMs < rm)
+  return { count: stale.length, sessions: stale.slice(0, 8).map((s) => ({ callsign: s.callsign, emoji: s.emoji, color: s.color })) }
 }
 
 // horse-harness: the CDP driver vendored inside the horse-browser package —
@@ -556,22 +599,34 @@ function siteSkillsTree() {
 // not a hardcoded map). Powers the docs page's three tiers. ~1-2s (harness import), so it's cached
 // and fetched by its own route, off the snapshot poll.
 let _verbsCache = null
-async function harnessVerbs() {
-  if (_verbsCache && Date.now() - _verbsCache.at < 15000) return _verbsCache.rows
+let _verbsPending = null
+async function refreshVerbs() {
+  const hb = findOnPath('horse-browser')   // resolve the binary — bare `horse-browser` is empty under a managed-launcher PATH
   let rows = []
-  try {
-    const { stdout } = await execFileP('horse-browser', ['verbs', '--json'], { timeout: 12000 })
-    const parsed = JSON.parse(stdout)
-    if (Array.isArray(parsed)) {
-      const root = hbPackageRoot()
-      rows = parsed.map((r) => ({    // shorten source paths for display: package → <pkg>, home → ~
-        ...r,
-        file: root && r.file && r.file.startsWith(root) ? '<pkg>' + r.file.slice(root.length) : (r.file || '').replace(HOME, '~'),
-      }))
-    }
-  } catch {}
+  if (hb) {
+    try {
+      const { stdout } = await execFileP(hb, ['verbs', '--json'], { timeout: 12000 })
+      const parsed = JSON.parse(stdout)
+      if (Array.isArray(parsed)) {
+        const root = hbPackageRoot()
+        rows = parsed.map((r) => ({    // shorten source paths for display: package → <pkg>, home → ~
+          ...r,
+          file: root && r.file && r.file.startsWith(root) ? '<pkg>' + r.file.slice(root.length) : (r.file || '').replace(HOME, '~'),
+        }))
+      }
+    } catch {}
+  }
   _verbsCache = { at: Date.now(), rows }
   return rows
+}
+// Never hold the request: fresh cache → return it; stale → return stale NOW and
+// refresh in the background; only the very first cold call awaits (single-flight,
+// so concurrent page loads share one harness import instead of spawning many).
+async function harnessVerbs() {
+  if (_verbsCache && Date.now() - _verbsCache.at < 15000) return _verbsCache.rows
+  if (!_verbsPending) _verbsPending = refreshVerbs().finally(() => { _verbsPending = null })
+  if (_verbsCache) return _verbsCache.rows
+  return _verbsPending
 }
 
 async function snapshot() {
@@ -590,6 +645,7 @@ async function snapshot() {
     versions: await softwareVersions(),
     agentDocs: agentDocs(),
     siteSkills: siteSkillsSummary(),
+    staleAgents: staleAgents(),
   }
 }
 
@@ -597,11 +653,11 @@ function mediaDir(ctx) { return path.join(path.dirname(ctx.dataDir), 'media') }
 
 /* ──────────────────────────── actions ────────────────────────────────────── */
 // A registry the frontend mirrors. `danger`: safe | network | destructive.
+// Installation is an AGENT task (see GET /setup.md) — the module keeps only the
+// deterministic wiring helpers it owns: applying the rule file (a script the
+// package ships) and launching an already-installed DeskPad.
 const ACTIONS = {
-  'install-horse-browser':   { danger: 'network',     label: 'Install horse-browser (npm)' },
-  'harness-setup':           { danger: 'network',     label: 'Build the harness venv' },
   'install-browser-config':  { danger: 'destructive', label: 'Install browser rule file' },
-  'install-deskpad':         { danger: 'network',     label: 'Install DeskPad (brew)' },
   'launch-deskpad':          { danger: 'safe',        label: 'Launch DeskPad' },
 }
 
@@ -662,6 +718,180 @@ export default {
       catch { res.json({ error: 'unreadable' }, 500) }
     })
 
+    // The SETUP SKILL — the manual, generated live with this machine's state.
+    // Installation is an agent task (a button can't survive foreign systems);
+    // the module stays the instrument panel the agent verifies against.
+    router.get('/setup.md', async (req, res) => {
+      const proto = (req.headers['x-forwarded-proto'] || 'http').toString().split(',')[0].trim()
+      const host = (req.headers['x-forwarded-host'] || req.headers.host || `localhost:${ctx.port}`).toString().split(',')[0].trim()
+      const base = `${proto}://${host}/api/${ctx.qualifiedId}`
+      const horse = !!findOnPath('horse-browser')
+      const venv = harnessReady()
+      const docs = agentDocs()
+      const rule = !!docs.blockPresent
+      const daemon = brokerInstalled()
+      const dp = await deskpadInfo()
+      const mark = (ok) => (ok ? '✅' : '⬜')
+      res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' })
+      // ?part=browser|credentials|display scopes the skill to one group; default = everything
+      const part = String(req.query.part || 'all')
+      const want = {
+        browser: part === 'all' || part === 'browser',
+        credentials: part === 'all' || part === 'credentials',
+        display: part === 'all' || part === 'display',
+      }
+      const state = [
+        want.browser && `- ${mark(horse && venv)} horse-browser installed${horse && venv ? '' : horse ? ' (bin present, harness venv missing)' : ''}`,
+        want.browser && `- ${mark(rule)} browser rule applied (~/.claude/rules/horse-browser.md)`,
+        want.credentials && `- ${mark(daemon)} credential broker daemon${part === 'all' ? ' (optional)' : ''}`,
+        want.display && `- ${mark(!!(dp.installed && dp.running))} DeskPad virtual display${part === 'all' ? ' (optional)' : ''}`,
+      ].filter(Boolean).join('\n')
+      const browserMd = `## Install the browser package
+
+Find this machine's node (≥ 20) however it's managed — don't assume a manager. Then:
+
+\`\`\`
+npm install -g @pa1nd/horse-browser
+\`\`\`
+
+postinstall builds the vendored Python venv (needs python3 ≥ 3.11, uses uv when
+present). If the venv didn't build: \`horse-browser harness-setup\`.
+NEVER probe with \`horse-browser --version\` — the launcher starts the browser;
+\`horse-browser status\` is the safe check.
+Verify: snapshot → \`tools['horse-browser'].installed\` and \`harness.installed\` both true.
+
+## Wire up the agents (always-on rule)
+
+\`\`\`
+horse-browser rule apply
+\`\`\`
+
+Verify: snapshot → \`agentDocs.blockPresent\` true.
+Agent sessions already running when the rule lands don't have it — the board
+lists them under "Wired up"; tell the operator to nudge or restart those.`
+      const credentialsMd = `## Credential broker${horse ? '' : ' — requires the browser package first'}
+
+How it works: a small signed daemon becomes the ONLY holder of the Bitwarden
+session; agents ask it to TYPE passwords over CDP, so the secret never enters
+any agent's context. There is no install API — everything below is a readable
+script or a file the module writes. Two moments in here are the operator's
+alone — they're marked; stop and hand over when you reach them.
+
+1 · Read, then run the install script (compiles the Swift daemon out of tree,
+ad-hoc signs it with the hardened runtime, writes the LaunchAgent plist, and
+bootstraps it under launchd — \`--rebuild\` forces a recompile; needs the Xcode
+Command Line Tools):
+
+\`\`\`
+sh "${BROKER_INSTALL}"
+\`\`\`
+
+The daemon's first start does one bare Keychain read, and macOS shows a
+permission prompt. Why: the broker keeps the Bitwarden session token (= full
+vault access) in a Keychain item whose access list is bound to the daemon's
+code signature — so ONLY this exact signed binary can ever read it. A freshly
+(re)compiled binary has a new signature, so macOS asks the machine's owner to
+authorize it: the OPERATOR enters their login password and clicks "Always
+Allow" (plain "Allow" would re-prompt on every read, and a prompt appearing
+mid-login would stall agents). The startup read exists to front-load this
+prompt to a moment a human is present. Getting re-asked after a rebuild is a
+feature — it tells the operator the boundary binary changed. Never approve
+these prompts yourself: an agent authorizing its own access to the vault
+token would defeat the entire boundary.
+
+2 · The agent-side package — ONE unit of three module-templated files (the
+module knows its own loopback URL and canonical verb code, which is why this
+is an endpoint, not a script): the verb plugin
+(\`agent-workspace/plugins/atelier_login.py\`), the per-site hint hook
+(\`~/.config/horse-browser/hints.d/atelier-hb-auth\`), and the always-on rule
+(\`~/.claude/rules/horse-browser-auth.md\`). Installed together, removed
+together; the operator can toggle it later in the board's Agent-integration
+panel, and the module keeps all three current while it's on:
+
+\`\`\`
+curl -X POST ${base}/agent-integration -H 'Content-Type: application/json' -d '{"enabled":true}'
+\`\`\`
+
+3 · HAND OVER to the operator:
+
+1. The OPERATOR runs \`${SETUP_CMD}\` in their own terminal — the Bitwarden
+   master password must never pass through you.
+2. Collection grants happen in the board UI with Touch ID — operator only.
+
+Verify: \`${base}/broker/status\` → \`installed\` and \`ok\` true, then \`vault.hasSession\`.
+
+4 · Teach yourself the login skill. The always-on rule only reaches sessions
+STARTED after this install — your own session predates it, so read the skill
+directly (generated live, includes the exact verbs and the flow):
+
+\`\`\`
+curl -s ${base}/skill.md
+\`\`\`
+
+That is also how any agent learns it on demand — hand another session the line
+\`I'm giving you a skill — read it and use it: ${base}/skill.md\`, or point it at
+\`horse-browser skill\` for the deeper browser manual. Once the operator has
+granted collections, prove it end-to-end: call \`list_login_profiles()\` and
+confirm your allow-list comes back.`
+      const displayMd = `## Lid-closed vision (DeskPad)
+
+\`\`\`
+brew install --cask deskpad && open -a DeskPad
+\`\`\`
+
+First launch: the OPERATOR approves the Screen Recording prompt once (it
+mirrors only its own virtual display). No brew? Any install path works.
+
+Keep it running across reboots — a login item, NOT launchd (it's a regular
+sandboxed app, not a daemon):
+
+\`\`\`
+osascript -e 'tell application "System Events" to make login item at end with properties {path:"/Applications/DeskPad.app", hidden:true}'
+\`\`\`
+
+macOS may ask to allow controlling "System Events" — that approval is the
+OPERATOR's. (Manual alternative: System Settings → General → Login Items → + DeskPad.)
+Verify: snapshot → \`deskpad.installed\` and \`deskpad.running\`.`
+      const scopeName = part === 'all' ? 'the Horse Browser stack' : part === 'browser' ? 'the Horse Browser package + agent wiring' : part === 'credentials' ? 'the Bitwarden credential broker' : 'the lid-closed virtual display'
+      // ?bare=1 → just the step sections (the wizard page renders these — same
+      // source the agent reads, no drift)
+      if (req.query.bare) {
+        return res.end([want.browser && browserMd, want.credentials && credentialsMd, want.display && displayMd].filter(Boolean).join('\n\n') + '\n')
+      }
+      res.end(`---
+name: horse-browser-setup${part === 'all' ? '' : '-' + part}
+description: Set up ${scopeName} on this machine — an agent-run install, verified live against the control board, with the human-only moments handed to the operator.
+---
+
+# Skill — set up ${scopeName}
+
+You are installing on THIS machine. The control board is the source of truth —
+verify every step against it and report what turned green. This machine may be
+unlike any you've seen (node via nvm/fnm/volta/brew/…, no brew, custom shells,
+proxies): figure it out your way, then verify.
+
+## This machine right now (generated live)
+
+${state}
+
+Verify anytime:
+\`curl -s ${base}/snapshot\` → \`tools['horse-browser'].installed\`, \`harness.installed\`, \`agentDocs.blockPresent\`, \`deskpad\`
+\`curl -s ${base}/broker/status\` → \`installed\` (the daemon)
+
+${[want.browser && browserMd, want.credentials && credentialsMd, want.display && displayMd].filter(Boolean).join('\n\n')}
+
+## Rules
+
+- Verify against the board after every step — never declare done from exit codes alone.
+- The human moments (master password, macOS approvals) are the operator's; stop and say so.
+- Narrate progress with THIS document's section names ("Install the browser
+  package", "Wire up the agents", "Credential broker", "Lid-closed vision") —
+  never invent your own step numbers: the operator is watching the board, and
+  your numbering must not collide with its steps.
+- Unusual machine? Solve it your way, then verify the same endpoints.
+`)
+    })
+
     // every loaded verb by tier (core / plugin:<file> / local), introspected from the harness
     router.get('/verbs', async (req, res) => res.json(await harnessVerbs()))
 
@@ -692,7 +922,8 @@ export default {
       const [cdp, harness, claudeProcs] = await Promise.all([cdpInfo(), harnessInfo(), pgrepClaude()])
       const resumeIds = new Set()
       for (const p of claudeProcs) { const m = UUID_RE.exec(p.cmd || ''); if (m) resumeIds.add(m[1]) }
-      const sessions = listSessions().filter((s) => s.age <= RUNNING_MS || resumeIds.has(s.id)).slice(0, 12)
+      const ruleMs = ruleMtimeMs()
+      const sessions = listSessionsCached().filter((s) => s.age <= RUNNING_MS || resumeIds.has(s.id)).slice(0, 12)
       const [latestH, latestC, tabMap] = await Promise.all([
         cachedLatest('latestHb', latestHorseVersion),
         cachedLatest('latestC', latestChromeVersion),
@@ -703,7 +934,7 @@ export default {
       return {
         harness: { running: harness.daemons.length > 0, count: harness.daemons.length, daemons: harness.daemons.slice(0, 16), version: hv, latest: latestH, upToDate: verGE(hv, latestH) },
         chrome: { running: cdp.up, version: chromeVer, port: cdp.port, pid: cdp.pids[0] || null, latest: latestC, upToDate: verGE(chromeVer, latestC) },
-        sessions: sessions.map((s) => ({ id: s.id, emoji: s.emoji, callsign: s.callsign, color: s.color, cwd: s.cwd, active: s.active })),
+        sessions: sessions.map((s) => ({ id: s.id, emoji: s.emoji, callsign: s.callsign, color: s.color, cwd: s.cwd, active: s.active, preRule: !!(ruleMs && s.startMs && s.startMs < ruleMs) })),
         tabs: cdp.tabSample.map((t) => ({ title: t.title, domain: t.domain, agent: t.title.startsWith('🐴') || t.title.startsWith('🐎'), callsign: tabMap[t.id] || null })),
       }
     }
@@ -778,35 +1009,6 @@ export default {
     // result reach the UI over the shell WS (action-log / action-done frames).
     const runAction = async (id) => {
       switch (id) {
-        case 'harness-setup': {
-          // the harness is vendored in the horse-browser package; harness-setup
-          // (re)builds its Python venv (uv when present, else python3 ≥ 3.11) —
-          // the same thing npm's postinstall does. Safe to re-run anytime.
-          const hb = findOnPath('horse-browser')
-          if (!hb) { emit(id, 'horse-browser not found — install it first (npm install -g @pa1nd/horse-browser)', 'stderr'); done(id, { ok: false }); return }
-          await runStreaming(id, hb, ['harness-setup'])
-          slot.verCache = {}; verBust(); tickNow()
-          return
-        }
-        case 'install-horse-browser': {
-          // npm is the source of truth now — install and update are the same command.
-          const npm = findOnPath('npm')
-          if (!npm) { emit(id, 'npm not found — install Node.js first (https://nodejs.org)', 'stderr'); done(id, { ok: false }); return }
-          const r = await runQuiet(id, npm, ['install', '-g', `${HB_NPM}@latest`])
-          if (!r.ok) { emit(id, `✗ npm install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return }
-          emit(id, `✓ ${HB_NPM} installed from npm (postinstall builds the vendored harness venv)`, 'ok')
-          // also write the browser rule file at ~/.claude/rules/horse-browser.md (idempotent) —
-          // the config that lets agents actually drive it. claude-md.sh ships in the package.
-          const cmScript = hbClaudeMdScript()
-          if (cmScript) {
-            emit(id, 'writing the browser rule into ~/.claude/rules/horse-browser.md…', 'stdout')
-            const r2 = await runQuiet(id, 'bash', [cmScript, 'apply'])
-            emit(id, r2.ok ? '✓ browser rule file applied' : `⚠ claude-md.sh apply failed (exit ${r2.code}) — run "Set up" on the config row`, r2.ok ? 'ok' : 'stderr')
-          }
-          slot.verCache = {}; verBust()
-          done(id, { ok: true }); tickNow()
-          return
-        }
         case 'install-browser-config': {
           // claude-md.sh writes the browser rule file at ~/.claude/rules/horse-browser.md
           // (idempotent, re-points the version-agnostic symlink). `apply` = (re)install.
@@ -814,19 +1016,6 @@ export default {
           if (!script) { emit(id, 'claude-md.sh not found — install horse-browser first', 'stderr'); done(id, { ok: false }); tickNow(); return }
           await runStreaming(id, 'bash', [script, 'apply'])
           slot.verCache = {}; verBust(); tickNow()
-          return
-        }
-        case 'install-deskpad': {
-          const brew = findOnPath('brew')
-          if (!brew) { emit(id, 'brew not found — install Homebrew first (https://brew.sh)', 'stderr'); done(id, { ok: false }); return }
-          const r = await runQuiet(id, brew, ['install', '--cask', 'deskpad'])
-          if (!r.ok) { emit(id, `✗ brew install failed (exit ${r.code})`, 'stderr'); done(id, { ok: false }); tickNow(); return }
-          emit(id, '✓ DeskPad installed (notarized release, sha256-pinned by brew)', 'ok')
-          // launch by path — LaunchServices may not know the name seconds after install
-          const r2 = await runQuiet(id, 'open', [DESKPAD_APP])
-          emit(id, r2.ok ? '✓ DeskPad launched' : '⚠ installed but not launched — use the Launch button', r2.ok ? 'ok' : 'stderr')
-          emit(id, 'first run: approve the Screen Recording prompt once (it mirrors only its own virtual display) — then the virtual display registers', 'stdout')
-          done(id, { ok: true }); tickNow()
           return
         }
         case 'launch-deskpad': {

@@ -73,15 +73,6 @@ function CopyLine({ text }) {
     </button>
   )
 }
-function CopyBox({ code, className = '' }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <div className={cn('group relative my-3', className)}>
-      <pre className="overflow-x-auto whitespace-pre rounded-lg bg-black/50 p-3 pr-12 font-mono text-[11.5px] leading-relaxed text-zinc-200">{code}</pre>
-      <button onClick={() => copyText(code).then((ok) => { if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1200) } })} className="absolute right-2 top-2 rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-medium text-zinc-300 opacity-0 transition group-hover:opacity-100 hover:bg-white/20">{copied ? 'copied' : 'copy'}</button>
-    </div>
-  )
-}
 
 /* markdown renderer for the agent skill (dark) */
 function mdInline(text, kb) {
@@ -182,7 +173,7 @@ function Markdown({ src }) {
 const TIER_META = { auto: { color: 'lime', label: 'auto' }, ask: { color: 'amber', label: 'ask' }, never: { color: 'zinc', label: 'never' } }
 function TierPill({ tier }) { const m = TIER_META[tier] || TIER_META.never; return <Badge color={m.color}>{m.label}</Badge> }
 
-const EVENT_LABEL = { type_secret: 'typed password', type_totp: 'typed 2FA code', get_secret: 'read password', get_totp: 'read 2FA code', policy_set: 'access change', lock_soft: 'locked vault', lock: 'locked vault (hard)', reset: 'disconnected' }
+const EVENT_LABEL = { type_secret: 'typed password', type_totp: 'typed 2FA code', get_totp: 'read 2FA code', policy_set: 'access change', lock_soft: 'locked vault', lock: 'locked vault (hard)', reset: 'disconnected' }
 const TIER_INK = { auto: 'text-emerald-400', ask: 'text-amber-400', off: 'text-zinc-500', never: 'text-zinc-500' }
 // session codename — byte-identical to statusline.sh / the tab grouper
 const CODE_COLORS = { red: '#f87171', orange: '#fb923c', yellow: '#facc15', green: '#4ade80', cyan: '#22d3ee', blue: '#60a5fa', purple: '#c084fc', pink: '#f472b6' }
@@ -190,14 +181,49 @@ const CODES = [['🔥', 'red'], ['🍎', 'red'], ['🍓', 'red'], ['🍒', 'red'
 function codeHash32(s) { let h = 0x811c9dc5; for (let i = 0; i < (s || '').length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) } h ^= h >>> 16; h = Math.imul(h, 0x7feb352d); h ^= h >>> 15; h = Math.imul(h, 0x846ca68b); h ^= h >>> 16; return h >>> 0 }
 function codename(id) { const [e, c] = CODES[codeHash32(id || '') % CODES.length]; return { callsign: (id || '').slice(-4).toUpperCase(), emoji: e, hex: CODE_COLORS[c] } }
 
+// Installing the credential feature is an AGENT task (like everything else) —
+// this block hands over the scoped setup prompt — the manual (and the install
+// script it points at) is the whole story; there is no install API.
+// the next step, front and center: the same green agent button-group as the
+// hero — open the credentials guide, or copy the scoped prompt straight away.
+function CredFeatureSetup({ status, navigate }) {
+  const prompt = `I'm giving you a skill — read it and use it: ${(typeof window !== 'undefined' ? window.location.origin : '') + API + '/setup.md?part=credentials'}`
+  return (
+    <div className="mt-4">
+      {/* the connection ladder above already shows the road — just the action + two lines here */}
+      <div className="flex max-w-[19rem] items-stretch rounded-full shadow-sm" style={{ background: ACCENT }}>
+        <button type="button" onClick={() => navigate && navigate('setup/credentials')} className="min-w-0 flex-1 px-3 py-1.5 text-[11.5px] font-semibold text-white transition hover:brightness-110">
+          Set up credentials — via agent →
+        </button>
+        <span className="my-1 w-px shrink-0 bg-white/35" />
+        <span className="flex shrink-0 items-center gap-1.5 px-2.5 transition hover:brightness-110">
+          <span className="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-white/90">prompt</span>
+          <CopyBoom value={prompt} title="Copy the credentials setup prompt" size={16} ink="#ffffff" className="drop-shadow-sm" />
+        </span>
+      </div>
+      <p className="mt-2.5 text-[12px] leading-relaxed text-zinc-500">An agent compiles the signed daemon (a readable script, installed outside the module tree) and wires the agent side. macOS will ask once for your password — choose <Strong>“Always Allow”</Strong>; your Bitwarden master password never leaves you.</p>
+    </div>
+  )
+}
+
 function BrokerStatus({ status }) {
   if (!status) return <div className="flex items-center gap-2 text-[13px] text-zinc-400"><Spinner className="size-4" /> reaching the broker…</div>
   const v = status.vault || {}
   const bwState = v.bwStatus || 'unknown'
   const dot = (c, t) => <span className="inline-flex items-center gap-1.5"><StatusDot color={c} />{t}</span>
-  const rows = [
-    ['daemon', status.installed ? (status.ok ? dot('lime', 'running') : dot('red', 'installed, not answering')) : (status.building ? <span className="inline-flex items-center gap-1.5"><Spinner className="size-3.5" />compiling…</span> : dot('zinc', 'not built'))],
-    ['bitwarden cli', bwState === 'no-cli' ? dot('red', 'not installed') : bwState === 'unauthenticated' ? dot('amber', 'not logged in') : dot('lime', bwState)],
+  const daemonRow = ['daemon', status.installed ? (status.ok ? dot('lime', 'running') : dot('red', 'installed, not answering')) : dot('zinc', 'not built')]
+  // no daemon yet → show the SAME ladder it will have once installed, with the
+  // later rungs as muted upcoming steps — the card doubles as the install guide
+  // and the UI doesn't reshuffle as things land
+  const pend = (t) => <span className="inline-flex items-center gap-1.5 text-zinc-600"><StatusDot color="zinc" />{t}</span>
+  const rows = !status.installed ? [
+    daemonRow,
+    ['bitwarden cli', pend('checked after install')],
+    ['session token', pend('after connect — hb-broker setup')],
+    ['vault session', pend('after connect')],
+  ] : [
+    daemonRow,
+    ['bitwarden cli', bwState === 'no-cli' ? dot('red', 'not installed') : bwState === 'unauthenticated' ? dot('amber', 'not logged in') : bwState === 'unknown' ? dot('zinc', 'unknown') : dot('lime', bwState)],
     ...(v.email ? [['account', <span className="font-mono text-[12px] text-zinc-200">{v.email}</span>]] : []),
     ...(v.server ? [['server', <span className="font-mono text-[12px] text-zinc-200">{(v.server || '').replace(/^https?:\/\//, '')}</span>]] : []),
     ['session token', v.hasSession ? dot('lime', 'in the login Keychain') : dot('red', 'not connected')],
@@ -218,28 +244,17 @@ function BrokerStatus({ status }) {
 function ConnectBox({ status, setupCmd, cli }) {
   const v = status?.vault || {}
   const cliReady = !!v.bwStatus && v.bwStatus !== 'no-cli'
-  const needToken = !v.hasSession
-  if (!cliReady || !needToken) return null
+  // needed with no token, AND when bw got logged out under a stale token — setup heals both
+  const needToken = !v.hasSession || v.bwStatus === 'unauthenticated'
+  if (!status?.installed || status?.hbInstalled === false || !cliReady || !needToken) return null
   return (
-    <div className="rounded-xl border border-amber-400/30 bg-amber-400/[0.06] p-4">
-      <div className="text-[13.5px] font-medium text-amber-300">Connect your Bitwarden</div>
+    <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/[0.06] p-4">
+      <div className="text-[13.5px] font-medium text-emerald-300">Connect your Bitwarden</div>
       <p className="mt-1 text-[13px] leading-relaxed text-zinc-400">
         Run this one command. It prompts for your server, email, and master password (typed hidden), then logs in and mints the token <Strong>inside the daemon</Strong> — so nothing (no token, no passwords) is ever printed to your terminal. Only the token is stored, in the code-signature-bound Keychain; your master password is never saved.
       </p>
       <div className="mt-3"><CopyLine text={setupCmd || `${cli || 'hb-broker'} setup`} /></div>
       <p className="mt-2 text-[12px] text-zinc-500"><Strong className="text-zinc-400">We don't recommend running <Code>bw login</Code> yourself</Strong> — bw prints the session token (full vault access) straight to your terminal.</p>
-    </div>
-  )
-}
-
-function PromptsCallout() {
-  return (
-    <div className="mt-5 flex gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <div aria-hidden="true" className="shrink-0 text-[34px] leading-none">🔒</div>
-      <div className="min-w-0">
-        <div className="text-[13px] font-semibold text-zinc-100">What the 🔒 means</div>
-        <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-400">A 🔒 is a real macOS approval — your Mac’s Touch ID / login-password prompt. You approve it when you raise a collection’s access and each time an agent uses an <Strong className="text-zinc-300">“ask”</Strong> credential; lowering access, <Strong className="text-zinc-300">auto</Strong> fills, unlocking the vault, and viewing collections are all silent.</p>
-      </div>
     </div>
   )
 }
@@ -269,7 +284,7 @@ const GROUP_TIERS = [
   { v: 'ask', label: 'ask', hint: 'macOS approval every use' },
   { v: 'auto', label: 'auto', hint: 'always, no prompt — unattended' },
 ]
-function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, saving, saveMsg }) {
+function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, saving, saveMsg, disabled }) {
   const [tiers, setTiers] = useState({})
   const meta = useRef({})
   useEffect(() => {
@@ -286,6 +301,8 @@ function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, savi
   const keys = Object.keys(meta.current).sort((a, b) => (meta.current[a].name || a).localeCompare(meta.current[b].name || b))
   const setTier = (k, v) => setTiers((t) => ({ ...t, [k]: v }))
   const grantedCount = Object.values(tiers).filter((v) => v && v !== 'off').length
+  // accounts reachable per tier — item counts come from the groups scan (0 until loaded)
+  const tally = (tier) => keys.filter((k) => (tiers[k] || 'off') === tier).reduce((n, k) => n + ((meta.current[k] || {}).count || 0), 0)
   const savedTiers = useMemo(() => { const g = (policy && policy.groups) || {}; const t = {}; for (const [k, r] of Object.entries(g)) t[k] = r.tier === 'never' ? 'off' : (r.tier || 'off'); return t }, [policy])
   const pending = keys.filter((k) => (tiers[k] || 'off') !== (savedTiers[k] || 'off'))
   const dirty = pending.length > 0
@@ -296,11 +313,19 @@ function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, savi
   }
   return (
     <div className="space-y-4">
+      {/* pending changes follow you while scrolling the (long) table — nothing
+          applies until the 🔒 save */}
+      {dirty && (
+        <div className="sticky top-3 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/25 bg-zinc-900/95 px-4 py-2.5 shadow-xl backdrop-blur">
+          <span className="text-[12.5px] text-zinc-300"><span className="font-semibold text-amber-300">{pending.length} pending change{pending.length === 1 ? '' : 's'}</span> — nothing applies until you save</span>
+          <Btn tone="accent" onClick={save} disabled={saving}><span aria-hidden="true" className="mr-1">🔒</span>{saving ? 'saving…' : 'Save access'}</Btn>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-[14px] font-semibold text-zinc-100">Access by collection</span>
         <div className="flex items-center justify-end gap-3">
           <p className="max-w-[16rem] text-right text-[11px] leading-snug text-zinc-500">Re-reads your live vault from Bitwarden to refresh counts.</p>
-          <button type="button" onClick={onLoadGroups} disabled={loadingGroups} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/15 px-2.5 py-1.5 text-[12px] text-zinc-300 transition hover:border-white/30 disabled:opacity-50">
+          <button type="button" onClick={onLoadGroups} disabled={loadingGroups || disabled} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/15 px-2.5 py-1.5 text-[12px] text-zinc-300 transition hover:border-white/30 disabled:opacity-50">
             {loadingGroups ? <Spinner className="size-3.5" /> : null} {groups ? 'Rescan' : 'Load collections'}
           </button>
         </div>
@@ -315,7 +340,7 @@ function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, savi
             </tr>
           </thead>
           <tbody>
-            {keys.length === 0 && <tr><td colSpan={3} className="px-3 py-6 text-center text-[13px] text-zinc-500">{groups ? 'No collections or folders in this Bitwarden account.' : 'Load your Bitwarden collections to grant access.'}</td></tr>}
+            {keys.length === 0 && <tr><td colSpan={3} className="px-3 py-6 text-center text-[13px] text-zinc-500">{disabled ? 'Build the broker daemon first — collections load through it.' : groups ? 'No collections or folders in this Bitwarden account.' : 'Load your Bitwarden collections to grant access.'}</td></tr>}
             {keys.map((k) => {
               const m = meta.current[k] || {}; const t = tiers[k] || 'off'
               return (
@@ -339,13 +364,22 @@ function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, savi
         </table>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="text-[12px] text-zinc-500">{grantedCount} collection{grantedCount === 1 ? '' : 's'} granted</span>
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <Btn tone="accent" onClick={save} disabled={saving || !dirty} style={!dirty ? { background: 'rgba(255,255,255,.08)' } : undefined}><span aria-hidden="true" className="mr-1">🔒</span>{saving ? 'saving…' : dirty ? `Save access · ${pending.length}` : 'Save access'}</Btn>
+        <span className="text-[12px] text-zinc-500">
+          {grantedCount} collection{grantedCount === 1 ? '' : 's'} granted
+          {(tally('auto') > 0 || tally('ask') > 0) && <> · <span className="font-medium text-emerald-300">{tally('auto')}</span> account{tally('auto') === 1 ? '' : 's'} auto · <span className="font-medium text-amber-300">{tally('ask')}</span> ask</>}
+        </span>
         {saveMsg && <span className={cn('text-[12.5px]', saveMsg.ok ? 'text-emerald-400' : 'text-rose-400')}>{saveMsg.text}</span>}
-        {dirty && !saving && !saveMsg && <span className="text-[12px] font-medium text-amber-400">not saved yet — {pending.map((k) => `${(meta.current[k] || {}).name || k} → ${tiers[k]}`).join(', ')}</span>}
-        {!dirty && !saveMsg && <span className="text-[11.5px] text-zinc-500">Approves a new or raised grant.</span>}
+        {dirty && !saving && !saveMsg && <span className="text-[12px] font-medium text-amber-400">{pending.map((k) => `${(meta.current[k] || {}).name || k} → ${tiers[k]}`).join(', ')}</span>}
+      </div>
+      {/* the save group: button · a two-line-tall 🔒 · the two-line small print it refers to */}
+      <div className="!mt-3 flex flex-wrap items-start gap-3.5">
+        <Btn tone="accent" onClick={save} disabled={saving || !dirty} style={!dirty ? { background: 'rgba(255,255,255,.08)' } : undefined}>{saving ? 'saving…' : dirty ? `Save access · ${pending.length}` : 'Save access'}</Btn>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Icon name="lock" size={24} className="shrink-0" style={{ color: '#ab9062' }} />
+          <p className="max-w-[36rem] text-[11px] leading-snug text-zinc-500">
+            Saving asks for a real macOS approval (Touch ID / login password) when it <Strong className="text-zinc-400">raises</Strong> access — same prompt an agent gets on every <Strong className="text-zinc-400">ask</Strong> login. Lowering access, <Strong className="text-zinc-400">auto</Strong> fills, and viewing collections stay silent.
+          </p>
+        </div>
       </div>
     </div>
   )
@@ -390,7 +424,7 @@ function ReachableSection({ navigate }) {
   return (
     <div className="space-y-3">
       <Label>Reachable accounts</Label>
-      <p className="max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">The logins inside your granted collections — what an agent can enumerate right now. This list is <Strong>non-secret</Strong>: any agent reads it via <Code>creds</Code>. The password and TOTP never appear here — those go through <Code>type_secret</Code> / <Code>get_secret</Code>, gated by tier, origin, and a macOS approval.</p>
+      <p className="max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">The logins inside your granted collections — what an agent can enumerate right now. This list is <Strong>non-secret</Strong>: any agent reads it via <Code>list_login_profiles</Code>. The password never appears here or anywhere — it is only ever <Code>type_secret</Code>-typed by the broker, gated by tier, origin, and a macOS approval.</p>
       {items.length === 0 ? (
         st.neverSynced ? (
           <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-[13px] text-zinc-500">Not synced yet — <button type="button" onClick={sync} disabled={syncing} className="underline underline-offset-2 hover:text-zinc-300 disabled:opacity-50">{syncing ? 'syncing…' : 'Sync now'}</button> to read your granted collections.</div>
@@ -463,7 +497,7 @@ function AuditFeed({ events }) {
 // Compact health CARD (dashboard, next to Connection): are the helper calls, the per-site hint
 // hook, and the always-on rule wired up? Fix buttons inline; the full reference lives on the
 // docs page (navigate('docs')). Self-fetching — drops in anywhere.
-function AgentIntegration({ navigate }) {
+function AgentIntegration({ navigate, brokerReady }) {
   const [helper, setHelper] = useState(null)
   const [cfg, setCfg] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -476,37 +510,64 @@ function AgentIntegration({ navigate }) {
   const hState = !helper ? null : (managed && mf.current ? 'ok' : managed ? 'outdated' : 'missing')
   const hook = cfg?.hook, ar = cfg?.authRule
   const dot = (s) => (s === 'ok' ? 'lime' : s == null || s === 'missing' ? 'zinc' : 'amber')
-  const post = async (p, okNote, after) => { setBusy(true); setNote(''); try { const r = await postJSON(p); setNote(r.ok ? okNote : (r.error || 'failed')); if (r.ok) await after() } catch { setNote('failed') } finally { setBusy(false) } }
+  const post = async (p, okNote, after, body) => { setBusy(true); setNote(''); try { const r = await postJSON(p, body); setNote(r.ok ? okNote : (r.error || 'failed')); if (r.ok) await after() } catch { setNote('failed') } finally { setBusy(false) } }
+  // ONE toggle governs the whole package (plugin + hook + rule): on = installed
+  // and kept current by the module; off = our three files removed.
+  const enabled = cfg ? cfg.enabled !== false : true
+  const toggle = () => post('/agent-integration', enabled ? 'agent integration removed' : 'agent integration installed', async () => { await loadCfg(); await loadHelper() }, { enabled: !enabled })
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div className="mb-1.5 flex items-center justify-between gap-3">
-        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Agent integration</span>
-        <button onClick={() => navigate('docs')} className="text-[12px] text-zinc-400 transition hover:text-zinc-100">reference →</button>
+        <span className="flex items-baseline gap-2.5">
+          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Agent integration</span>
+          <button onClick={() => navigate('docs')} className="text-[11px] text-zinc-500 transition hover:text-zinc-200">reference →</button>
+        </span>
+        <div className="flex items-center gap-2">
+          {brokerReady && cfg && <span className={cn('text-[10.5px] font-medium', enabled ? 'text-zinc-400' : 'text-amber-300/90')}>{enabled ? 'shown to every new agent' : 'hidden from new agents'}</span>}
+          {brokerReady && cfg && (
+            <button type="button" role="switch" aria-checked={enabled} disabled={busy} onClick={toggle}
+              title={enabled ? 'Remove the agent integration (plugin + hint hook + rule) — agents stop seeing the broker' : 'Install the agent integration (plugin + hint hook + rule)'}
+              className={cn('relative h-[18px] w-8 shrink-0 rounded-full transition-colors disabled:opacity-50', enabled ? '' : 'bg-white/15')} style={enabled ? { background: ACCENT } : undefined}>
+              <span className={cn('absolute left-0 top-[2px] size-[14px] rounded-full bg-white shadow transition-transform', enabled ? 'translate-x-[16px]' : 'translate-x-[2px]')} />
+            </button>
+          )}
+        </div>
       </div>
+      {brokerReady && cfg && !enabled && <div className="mb-1 text-[11.5px] leading-snug text-amber-300/90">off — agents don't see the broker; toggling on reinstalls all three pieces</div>}
       <div className="divide-y divide-white/5">
         <div className="flex items-start justify-between gap-3 py-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5 text-[13px] text-zinc-300"><StatusDot color={dot(hState)} /><span className="min-w-0 truncate">{hState === 'ok' ? 'helper calls' : hState === 'outdated' ? 'helper calls — update' : hState === 'missing' ? (helper?.harnessReady ? 'helper calls — not installed' : 'helper calls — install horse-browser') : 'helper calls…'}</span></div>
-            <div className="mt-0.5 pl-[18px] text-[11.5px] leading-snug text-zinc-500">the broker verbs (<span className="cl-mono text-zinc-400">type_secret</span>, <span className="cl-mono text-zinc-400">creds</span>…) agents call to reach the vault</div>
+            <div className="mt-0.5 pl-[18px] text-[11.5px] leading-snug text-zinc-500">the broker verbs (<span className="cl-mono text-zinc-400">type_secret</span>, <span className="cl-mono text-zinc-400">list_login_profiles</span>…) agents call to reach the vault</div>
           </div>
-          {hState && hState !== 'ok' && helper?.harnessReady && <Btn tone="outline" disabled={busy} onClick={() => post('/helpers/install', 'installed', loadHelper)}>{hState === 'outdated' ? 'Update' : 'Install'}</Btn>}
+          {/* no per-row buttons — the package toggle governs; self-heal keeps pieces current while on */}
         </div>
         <div className="flex items-start justify-between gap-3 py-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5 text-[13px] text-zinc-300"><StatusDot color={dot(hook?.state)} /><span className="min-w-0 truncate">{hook?.state === 'ok' ? 'per-site hint hook' : hook ? 'per-site hint hook — not installed' : 'per-site hint hook…'}</span></div>
             <div className="mt-0.5 pl-[18px] text-[11.5px] leading-snug text-zinc-500">shows agents a saved login exists when they open a site</div>
           </div>
-          {hook && hook.state !== 'ok' && <Btn tone="outline" disabled={busy} onClick={() => post('/hints-hook/install', 'hook installed', loadCfg)}>{hook.state === 'missing' ? 'Install' : 'Reinstall'}</Btn>}
         </div>
         <div className="flex items-start justify-between gap-3 py-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-2.5 text-[13px] text-zinc-300"><StatusDot color={dot(ar?.state)} /><span className="min-w-0 truncate">{!ar ? 'always-on agent rule…' : ar.state === 'foreign' ? 'always-on agent rule — your own file' : 'always-on agent rule'}</span></div>
-            <div className="mt-0.5 pl-[18px] text-[11.5px] leading-snug text-zinc-500">{ar?.state === 'foreign' ? 'a rule file we didn’t write is here — Replace to manage it here' : 'always installed — tells every agent to use the broker, never type a secret'}</div>
+            <div className="flex items-center gap-2.5 text-[13px] text-zinc-300"><StatusDot color={dot(ar?.state)} /><span className="min-w-0 truncate">{!ar ? 'always-on agent rule…' : ar.state === 'foreign' ? 'always-on agent rule — your own file' : ar.state === 'missing' ? 'always-on agent rule — not installed' : ar.state === 'stale' ? 'always-on agent rule — outdated' : 'always-on agent rule'}</span></div>
+            <div className="mt-0.5 pl-[18px] text-[11.5px] leading-snug text-zinc-500">{ar?.state === 'foreign' ? 'a rule file we didn’t write is here — Replace to manage it here' : 'loads into every Claude Code session at start — use the broker, never type a secret yourself'}</div>
           </div>
           {ar?.state === 'foreign' && <Btn tone="outline" disabled={busy} onClick={() => post('/authrule/install', 'rule installed', loadCfg)}>Replace</Btn>}
         </div>
       </div>
       {note && <div className="mt-2 text-[11.5px] text-zinc-500">{note}</div>}
+      {/* ── the HANDOFF — its own quiet section under a rule, not a fourth card ── */}
+      {brokerReady && (
+        <div className="mt-3.5 border-t border-white/[0.07] pt-3">
+          <div className="flex items-center gap-2">
+            <span aria-hidden="true" className="text-[14px]">🐴</span>
+            <button onClick={() => navigate('skill')} className="min-w-0 truncate text-left text-[12.5px] font-semibold text-zinc-200 transition hover:text-white">Hand the login skill to an agent →</button>
+            <span className="ml-auto shrink-0"><CopyBoom value={`I'm giving you a skill — read it and use it: ${(typeof window !== 'undefined' ? window.location.origin : '') + API + '/skill.md'}`} title="Copy the login-skill prompt" /></span>
+          </div>
+          <p className="mt-1 pl-[22px] text-[11.5px] leading-snug text-zinc-500">teaches an agent to sign into sites through the broker — <span className="cl-mono text-zinc-400">list_login_profiles</span>, <span className="cl-mono text-zinc-400">type_secret</span>, and the 🐴 hints</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -577,7 +638,8 @@ function QuickSearch({ navigate }) {
         {loading && <Spinner className="size-3.5 shrink-0 text-zinc-500" />}
       </div>
       {q && (
-        <div className="absolute inset-x-0 top-full z-20 mt-1.5 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl">
+        /* in-flow, not an overlay — the card GROWS so results always have room */
+        <div className="mt-1.5 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl">
           {loading && !items ? (
             <div className="px-3 py-3 text-[12px] text-zinc-500">searching…</div>
           ) : matches.length === 0 ? (
@@ -702,26 +764,12 @@ export function AuthPanel({ self, navigate }) {
   const grantedCols = bw?.granted
   const nothingGranted = ready && grantedCols === 0
   const setup = !bw ? false : !bw.installed || v.bwStatus === 'no-cli' || v.bwStatus === 'unauthenticated' || !v.hasSession || nothingGranted || !ready
-  const line = !bw ? { dot: 'zinc', text: 'checking the broker…' }
-    : !bw.installed ? { dot: 'zinc', text: bw.building ? 'compiling the signed daemon…' : 'not built yet — one click sets it up' }
-    : v.bwStatus === 'no-cli' ? { dot: 'amber', text: 'the Bitwarden CLI (bw) isn’t installed' }
-    : v.bwStatus === 'unauthenticated' ? { dot: 'amber', text: 'bw is not logged in' }
-    : !v.hasSession ? { dot: 'amber', text: 'connect your vault — one command, nothing prints' }
-    : nothingGranted ? { dot: 'amber', text: 'connected — grant a collection to let agents in' }
-    : ready ? { dot: 'lime', text: 'connected — agents can sign in' }
-    : { dot: 'amber', text: 'reconnect needed — agents can’t read the vault' }
+  const reloadBw = () => { fetch(API + '/broker/status').then((r) => r.json()).then(setBw).catch(() => {}) }
+  const lockVault = async () => { try { await postJSON('/broker/lock-soft') } catch {} ; reloadBw() }
 
-  const skillUrl = (typeof window !== 'undefined' ? window.location.origin : '') + API + '/skill.md'
-  const agentPrompt = `I'm giving you a skill — read it and use it: ${skillUrl}`
-
-  const Stat = ({ value, label, tone }) => (
-    <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
-      <div className={cn('text-[18px] font-semibold tabular-nums', tone || 'text-zinc-50')}>{value}</div>
-      <div className="mt-0.5 text-[10px] uppercase tracking-[0.1em] text-zinc-500">{label}</div>
-    </div>
-  )
   return (
-    <div className="overflow-hidden rounded-2xl border border-emerald-400/20 bg-white/[0.03] p-5 sm:p-6">
+    /* no overflow-hidden — the copy booms (header chip, agent handovers) must escape the panel */
+    <div className="rounded-2xl border border-emerald-400/20 bg-white/[0.03] p-5 sm:p-6">
       <div className="flex flex-wrap items-start gap-4">
         <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-emerald-400/10"><Icon name="key-round" size={24} style={{ color: ACCENT }} /></span>
         <div className="min-w-0 flex-1">
@@ -731,54 +779,62 @@ export function AuthPanel({ self, navigate }) {
             {bw?.policyOk === false && <Badge color="red">policy tampered</Badge>}
           </div>
           <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-zinc-400">Agents sign into any site without ever seeing the password — a signed local daemon types it over CDP, gated by the Bitwarden collection, the tab’s origin, and a macOS approval.</p>
-          {/* only surface the status line when there's something to act on — a
-              fully-connected broker needs no "connected" restatement (the badge +
-              connection panel already say so) */}
-          {(!ready || nothingGranted) && <div className="mt-2 inline-flex items-center gap-2 text-[12.5px] text-zinc-300"><StatusDot color={line.dot} />{line.text}</div>}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {ready && (
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 px-3.5 py-2 text-[12.5px] font-semibold text-zinc-200">
-              <button onClick={() => navigate('skill')} className="inline-flex items-center gap-1.5 transition hover:text-white"><span style={{ color: ACCENT }}><AgentSpark /></span>hand to an agent</button>
-              <span className="text-zinc-600">·</span>
-              <CopyBoom value={agentPrompt} title="Copy the agent prompt" />
-            </span>
-          )}
-          <button onClick={() => navigate('credentials')} className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>
-            {setup ? 'Set up the broker' : 'Broker settings'} <span>→</span>
-          </button>
+          {/* NO status line — the connection ladder and access panel below carry the state */}
         </div>
       </div>
 
-      {bw && bw.installed && (
+      {bw && (
         <>
           <div className="mt-5 grid gap-4 lg:grid-cols-2">
-            {/* connection */}
+            {/* connection — the whole daemon setup happens right here on the board */}
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Connection</div>
+              <div className="mb-1 flex items-baseline justify-between gap-3">
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Connection</span>
+                {bw?.installed && (
+                  <span className="flex items-center gap-2.5 text-[11px]">
+                    <button onClick={lockVault} title="Drops the unlocked session but keeps the token — re-warms silently on next use, no reconnect." className="text-zinc-500 underline decoration-zinc-700 underline-offset-2 transition hover:text-zinc-200">lock vault</button>
+                    {ready && <DisconnectLink name="Bitwarden" endpoint="/broker/disconnect" warn="Forgets the session token, drops the vault session, clears grants + log. The daemon stays installed." lock onDone={reloadBw} />}
+                  </span>
+                )}
+              </div>
               <BrokerStatus status={bw} />
+              {!bw.installed && <CredFeatureSetup status={bw} navigate={navigate} />}
+              {bw.installed && bw.vault?.bwStatus === 'no-cli' && (
+                <div className="mt-4 border-t border-white/5 pt-3"><div className="mb-1.5 text-[12px] text-zinc-400">Install the Bitwarden CLI:</div><CopyLine text="brew install bitwarden-cli" /></div>
+              )}
             </div>
             {/* agent integration — setup health, next to the connection */}
-            <AgentIntegration navigate={navigate} />
+            <AgentIntegration navigate={navigate} brokerReady={!!bw.installed} />
           </div>
+          {/* connect the vault — appears once the daemon is up and no token is minted yet */}
+          <div className="mt-4 empty:hidden"><ConnectBox status={bw} setupCmd={bw.setupCmd} cli={bw.cli} /></div>
           {/* access — full width below */}
           <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
             <div className="mb-2 flex items-center justify-between gap-3">
               <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Access</span>
-              {ready && !nothingGranted && <button onClick={() => navigate('accounts')} className="text-[12px] text-zinc-400 transition hover:text-zinc-100">all accounts →</button>}
+              <span className="flex items-center gap-4">
+                {ready && !nothingGranted && <button onClick={() => navigate('accounts')} className="text-[12px] text-zinc-400 transition hover:text-zinc-100">all accounts →</button>}
+                {/* THE regular action on this panel — granting/editing access */}
+                {bw?.installed && <button onClick={() => navigate('credentials')} className="rounded-full px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>Grant access →</button>}
+              </span>
             </div>
             {ready && !nothingGranted ? (
               <>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <Stat value={grp ? grp.accounts : '…'} label="reachable" tone="text-emerald-300" />
-                  <Stat value={grp ? grp.collections : (grantedCols ?? '…')} label="collections" />
-                  <Stat value={grp ? grp.auto : '…'} label="auto" />
-                  <Stat value={grp ? grp.ask : '…'} label="ask" />
+                {/* one compact box instead of four wide tiles */}
+                <div className="inline-flex flex-wrap items-baseline gap-x-2.5 gap-y-1 rounded-lg border border-white/10 bg-white/[0.02] px-4 py-2.5">
+                  <span className="text-[20px] font-semibold tabular-nums text-emerald-300">{grp ? grp.accounts : '…'}</span>
+                  <span className="text-[12px] text-zinc-400">accounts reachable</span>
+                  <span className="text-zinc-600">·</span>
+                  <span className="text-[12px] text-zinc-400"><span className="font-semibold tabular-nums text-zinc-200">{grp ? grp.collections : (grantedCols ?? '…')}</span> collection{(grp ? grp.collections : grantedCols) === 1 ? '' : 's'} granted</span>
+                  <span className="text-zinc-600">·</span>
+                  <span className="text-[12px] text-zinc-400"><span className="font-semibold tabular-nums text-zinc-200">{grp ? grp.auto : '…'}</span> auto</span>
+                  <span className="text-zinc-600">·</span>
+                  <span className="text-[12px] text-zinc-400"><span className="font-semibold tabular-nums text-amber-300">{grp ? grp.ask : '…'}</span> ask</span>
                 </div>
                 <div className="mt-3"><QuickSearch navigate={navigate} /></div>
               </>
             ) : (
-              <div className="py-3 text-[12.5px] text-zinc-400">{nothingGranted ? <>Nothing granted yet — grant a collection in <button onClick={() => navigate('credentials')} className="underline underline-offset-2 hover:text-zinc-200">Settings</button> to let agents in.</> : 'connect the vault to grant access.'}</div>
+              <div className="py-3 text-[12.5px] text-zinc-400">{nothingGranted ? <>Nothing granted yet — grant a collection in <button onClick={() => navigate('credentials')} className="underline underline-offset-2 hover:text-zinc-200">Settings</button> to let agents in.</> : !bw.installed ? 'build the daemon and connect the vault, then grant a collection.' : 'connect the vault to grant access.'}</div>
             )}
           </div>
         </>
@@ -813,58 +869,34 @@ export function Settings({ self, navigate }) {
 
   const loadGroups = async () => { setLoadingGroups(true); try { const r = await postJSON('/broker/refresh'); if (r.ok) setGroups(r.groups || []) } finally { setLoadingGroups(false) } }
   const save = async (body) => { setSaving(true); setSaveMsg(null); try { const r = await postJSON('/broker/policy', body); if (r.ok) { setPolicy(r.policy); setSaveMsg({ ok: true, text: 'saved' }) } else setSaveMsg({ ok: false, text: r.error || r.reason || 'failed' }) } finally { setSaving(false); setTimeout(() => setSaveMsg(null), 4000) } }
-  // Soft lock: drop the warm session but keep the token — re-warms silently on next use, no
-  // reconnect. (The hard path — forget the token entirely — is Disconnect below.)
-  const lock = async () => { await postJSON('/broker/lock-soft'); loadStatus() }
-  const rebuild = async () => { setStatus((s) => ({ ...(s || {}), building: true })); await postJSON('/broker/rebuild'); loadStatus() }
 
   const v = status?.vault
   const badge = !status ? null
-    : !status.installed ? <Badge color={status.building ? 'amber' : 'zinc'}>{status.building ? 'building' : 'not built'}</Badge>
+    : !status.installed ? <Badge color="zinc">not built</Badge>
     : v?.bwStatus === 'no-cli' ? <Badge color="red">no cli</Badge>
     : v?.bwStatus === 'unauthenticated' ? <Badge color="amber">not logged in</Badge>
     : !v?.hasSession ? <Badge color="amber">setup</Badge>
     : <Badge color="lime">connected</Badge>
   const subtitle = !status ? 'checking…' : !status.installed ? 'daemon not built' : v?.bwStatus === 'no-cli' ? 'bitwarden cli not installed' : v?.bwStatus === 'unauthenticated' ? 'bw not logged in' : !v?.hasSession ? 'vault token not connected' : v?.warm ? 'agent broker · vault unlocked' : 'agent broker · vault locked'
-  const bwReady = !!(status && status.installed && v && v.hasSession && v.bwStatus !== 'no-cli' && v.bwStatus !== 'unauthenticated')
 
   return (
     <>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      {/* this page has ONE job — access by collection (accounts + log live off the board) */}
+      <div className="mb-6">
         <button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition hover:text-zinc-100">← back to the board</button>
-        <div className="flex items-center gap-3 text-[12.5px]">
-          <button onClick={() => navigate('accounts')} className="text-zinc-400 transition hover:text-zinc-100">reachable accounts →</button>
-          <span className="text-zinc-600">·</span>
-          <button onClick={() => navigate('activity')} className="text-zinc-400 transition hover:text-zinc-100">access log →</button>
-        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_26rem] lg:items-start">
-        <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <img src={`${API}/images/bitwarden.png`} alt="" aria-hidden="true" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} className="size-10 shrink-0 object-contain" />
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2"><h1 className="text-[22px] font-semibold tracking-tight text-white">Broker settings</h1>{badge}<Badge color="violet">enforced</Badge></div>
-              <div className="font-mono text-[12px] text-zinc-500">{subtitle}</div>
-            </div>
+      {/* connection management lives on the DASHBOARD's connection box — this
+          page is heading toward one job: access by collection */}
+      <div className="min-w-0">
+        <div className="flex items-center gap-3">
+          <img src={`${API}/images/bitwarden.png`} alt="" aria-hidden="true" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} className="size-10 shrink-0 object-contain" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2"><h1 className="text-[22px] font-semibold tracking-tight text-white">Broker settings</h1>{badge}<Badge color="violet">enforced</Badge></div>
+            <div className="font-mono text-[12px] text-zinc-500">{subtitle}</div>
           </div>
-          <p className="mt-3 max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">A signed local daemon is the only holder of the Bitwarden session. Agents ask it for an action — <Code>type_secret</Code> / <Code>type_totp</Code> — typed over the broker's own browser session, gated by the collection's access level, an origin check, and a macOS approval. The secret never enters agent code.</p>
-          <p className="mt-3 max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">Grant agents a Bitwarden <Strong>collection</Strong> (or folder), not individual logins — every item inside inherits the tier, and moving a password in or out of the collection is how you change its access. <Strong>auto</Strong> = silent; <Strong>ask</Strong> = macOS approval each use. <Strong>Only granted collections are reachable</Strong> — every other item in your vault is a hard deny, not even enumerable, so your personal logins are never silently available.</p>
-          <PromptsCallout />
-          <div className="mt-4 max-w-2xl empty:hidden"><ConnectBox status={status} setupCmd={status?.setupCmd} cli={status?.cli} /></div>
         </div>
-
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Connection</div>
-          <div className="mt-2.5"><BrokerStatus status={status} /></div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <button onClick={lock} title="Drops the unlocked session but keeps the token — re-warms silently on next use, no reconnect." className="text-[12px] text-zinc-400 underline underline-offset-2 transition hover:text-zinc-100">lock vault</button>
-            <span className="text-zinc-600">·</span>
-            <button onClick={rebuild} className="text-[12px] text-zinc-400 underline underline-offset-2 transition hover:text-zinc-100">rebuild daemon</button>
-            {bwReady && <><span className="text-zinc-600">·</span><DisconnectLink name="Bitwarden" endpoint="/broker/disconnect" warn="Forgets the session token, drops the vault session, clears grants + log. The daemon stays installed." lock onDone={() => { loadStatus(); loadPolicy() }} /></>}
-          </div>
-          {v?.bwStatus === 'no-cli' && <div className="mt-4 border-t border-white/5 pt-3"><div className="mb-1.5 text-[12px] text-zinc-400">Install the Bitwarden CLI:</div><CopyLine text="brew install bitwarden-cli" /></div>}
-        </div>
+        <p className="mt-3 max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">Grant agents a Bitwarden <Strong>collection</Strong> (or folder), not individual logins — every item inside inherits the tier, and moving a password in or out of the collection is how you change its access. <Strong>auto</Strong> = silent; <Strong>ask</Strong> = macOS approval each use. <Strong>Only granted collections are reachable</Strong> — every other item in your vault is a hard deny, not even enumerable, so your personal logins are never silently available.</p>
       </div>
 
       {status && status.policyOk === false && (
@@ -873,7 +905,7 @@ export function Settings({ self, navigate }) {
         </div>
       )}
 
-      <div className="mt-8"><GroupPicker policy={policy} groups={groups} onLoadGroups={loadGroups} loadingGroups={loadingGroups} onSave={save} saving={saving} saveMsg={saveMsg} /></div>
+      <div className="mt-8"><GroupPicker policy={policy} groups={groups} onLoadGroups={loadGroups} loadingGroups={loadingGroups} onSave={save} saving={saving} saveMsg={saveMsg} disabled={!!status && !status.installed} /></div>
 
       <div className="mt-14"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
     </>
@@ -885,9 +917,9 @@ export function Accounts({ self, navigate }) {
   setApi(self)
   return (
     <>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      {/* only the back link — these pages don't route sideways */}
+      <div className="mb-6">
         <button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition hover:text-zinc-100">← back to the board</button>
-        <button onClick={() => navigate('credentials')} className="text-[12.5px] text-zinc-400 transition hover:text-zinc-100">broker settings →</button>
       </div>
       <Reveal><ReachableSection navigate={navigate} /></Reveal>
       <div className="mt-14"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
@@ -907,9 +939,9 @@ export function Activity({ self, navigate }) {
   }, [])
   return (
     <>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      {/* only the back link — these pages don't route sideways */}
+      <div className="mb-6">
         <button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition hover:text-zinc-100">← back to the board</button>
-        <button onClick={() => navigate('credentials')} className="text-[12.5px] text-zinc-400 transition hover:text-zinc-100">broker settings →</button>
       </div>
       <Reveal>
         <Label>Access log</Label>

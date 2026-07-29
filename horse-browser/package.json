@@ -1,6 +1,6 @@
 {
   "name": "horse-browser",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "license": "MIT",
   "description": "The control board for the Horse Browser — the dedicated browser your agents drive (vendored harness included): setup/status tiles, the enforced Bitwarden credential broker, a real compositing probe + DeskPad lid-closed vision, the live process wall, and the docs agents load. A compact hero links to the full story.",
   "scripts": {

@@ -26,8 +26,14 @@ public func hostsOf(_ uris: [String]) -> [String] {
 // This is the ONLY special-casing. Under a normal domain we deliberately DON'T distinguish
 // subdomains: a login on one subdomain covers its siblings (the agent may open the right site on
 // the wrong subdomain — a wanted convenience). Multi-tenant hosting (github.io, *.web.app,
-// *.myshopify.com) is NOT listed here by choice, so its siblings match too. Extend ONLY with real
-// ccTLD second-level registries (https://publicsuffix.org, the ICANN ccTLD section).
+// *.myshopify.com) is NOT listed here BY DESIGN, so its siblings match too.
+//   DELIBERATE (operator ruling 2026-07-29, after a 3-reviewer flag): the match stays wide. The
+//   broker never fills blindly — a password is typed only when an agent deliberately acts on a
+//   task, and `ask`-tier items demand a live macOS approval every use. The convenience of not
+//   fighting subdomain drift outweighs the multi-tenant edge, which the approval gate covers. If
+//   that trade ever changes, swap this list for the real Public Suffix List (splits github.io
+//   tenants while keeping google.com subdomains together).
+// Extend ONLY with real ccTLD second-level registries (https://publicsuffix.org, ICANN section).
 let MULTIPART_TLDS: Set<String> = [
   "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "sch.uk", "ac.uk", "gov.uk",
   "com.au", "net.au", "org.au", "edu.au", "gov.au", "id.au",

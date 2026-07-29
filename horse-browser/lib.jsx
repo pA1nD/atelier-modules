@@ -38,6 +38,8 @@ const CSS = `
 
 @keyframes cl-blink-slow{ 0%,100%{opacity:1} 50%{opacity:.25} }
 .cl-blink-slow{ animation:cl-blink-slow 1.5s ease-in-out infinite; }
+@keyframes cl-cursor{ 0%,49%{opacity:1} 50%,100%{opacity:0} }
+.cl-cursor{ animation:cl-cursor 1.1s step-end infinite; }
 
 @keyframes cl-pop{ from{ opacity:0; transform:translateY(4px) scale(.96);} to{ opacity:1; transform:none;} }
 .cl-pop{ animation:cl-pop .35s cubic-bezier(.16,1,.3,1) both; }
@@ -55,7 +57,7 @@ const CSS = `
 
 @media (prefers-reduced-motion: reduce){
   .cl-reveal{ opacity:1 !important; transform:none !important; transition:none !important; }
-  .cl-blink-slow,.cl-pop,.cl-tabin,.cl-ripple,.is-in .cl-ink{ animation:none !important; }
+  .cl-blink-slow,.cl-cursor,.cl-pop,.cl-tabin,.cl-ripple,.is-in .cl-ink{ animation:none !important; }
   .cl-ink{ clip-path:none !important; filter:none !important; }
   .cl-root *,.cl-root *::before,.cl-root *::after{ animation-duration:.001ms !important; transition-duration:.001ms !important; scroll-behavior:auto !important; }
 }
@@ -290,23 +292,6 @@ export function Step({ label, color = '#3b82f6', title, lead, children, dark, cl
 
 // installed version + a clean "v{latest} available → Update" (an update is always a
 // fresh install from the source of truth — npm / PyPI — never a kept copy).
-export function VersionTag({ v, run, dark }) {
-  if (!v || !v.installed) return null
-  const update = v.latest && v.upToDate === false && v.action
-  return (
-    <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
-      <code className={cn('cl-mono rounded px-1.5 py-0.5 text-[10.5px] font-medium', dark ? 'bg-white/10 text-zinc-400' : 'bg-zinc-950/[0.05] text-zinc-500 dark:bg-white/10 dark:text-zinc-400')}>{v.version ? 'v' + v.version : 'installed'}</code>
-      {update ? (
-        <>
-          <span className={cn('text-[11px] font-medium', dark ? 'text-amber-400' : 'text-amber-600 dark:text-amber-400')}>v{v.latest} available</span>
-          {run && <button onClick={() => run(v.action, { confirm: true })} className={cn('rounded-full border px-2 py-[3px] text-[10.5px] font-semibold transition', dark ? 'border-amber-400/40 text-amber-300 hover:bg-amber-400/10' : 'border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300')}>Update</button>}
-        </>
-      ) : v.upToDate === true ? (
-        <span className={cn('text-[10.5px]', dark ? 'text-zinc-500' : 'text-zinc-400 dark:text-zinc-500')}>up to date</span>
-      ) : null}
-    </span>
-  )
-}
 
 // A focused reading overlay (copied from the claude-md module, dark-hardcoded —
 // the night console owns its palette regardless of the chrome's theme).
@@ -333,7 +318,7 @@ export function Modal({ onClose, size = 'max-w-2xl', closeOnEsc = true, children
 
 // Animated copy button — a celebratory "boom" on success: a checkmark draws in
 // while particles, rings and sparks burst outward. The exact same element the
-// sites module uses (uiverse.io neon checkbox, agent-violet #7c5cff). Keyframes
+// sites module uses (uiverse.io neon checkbox, agent-violet #e8b04b). Keyframes
 // injected once. Pass `value` (string or () => string) and an optional `title`.
 const CB_PARTICLES = [[26, -22], [-26, -22], [24, 24], [-24, 24], [34, 2], [-34, 2], [2, 34], [-2, -34], [18, -30], [-18, 30], [30, 18], [-30, -18]]
 const CB_RING_DELAYS = ['0s', '.08s', '.16s']
@@ -341,23 +326,23 @@ const CB_SPARKS = [0, 90, 180, 270]
 const CB_CSS = `
 .hb-cb__copy,.hb-cb__check{position:absolute;inset:0;width:100%;height:100%}
 .hb-cb__copy{transition:opacity .18s ease,transform .18s ease}
-.hb-cb__check{fill:none;stroke:#7c5cff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:26;stroke-dashoffset:26;opacity:0;transform:scale(.5)}
+.hb-cb__check{fill:none;stroke:#e8b04b;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:26;stroke-dashoffset:26;opacity:0;transform:scale(.5)}
 .hb-cb.is-boom .hb-cb__copy{opacity:0;transform:scale(.4)}
 .hb-cb.is-boom .hb-cb__check{opacity:1;transform:scale(1);stroke-dashoffset:0;transition:stroke-dashoffset .45s cubic-bezier(.16,1,.3,1) .06s,opacity .12s ease,transform .3s cubic-bezier(.16,1,.3,1)}
 .hb-cb__fx{position:absolute;top:50%;left:50%;width:0;height:0;pointer-events:none}
 .hb-cb__particles span,.hb-cb__rings span,.hb-cb__sparks span{position:absolute;top:0;left:0;opacity:0}
-.hb-cb__particles span{width:5px;height:5px;margin:-2.5px;border-radius:50%;background:#7c5cff;box-shadow:0 0 7px #7c5cff}
+.hb-cb__particles span{width:5px;height:5px;margin:-2.5px;border-radius:50%;background:#e8b04b;box-shadow:0 0 7px #e8b04b}
 .hb-cb.is-boom .hb-cb__particles span{animation:hbCbParticle .62s cubic-bezier(.16,1,.3,1) forwards}
-.hb-cb__rings span{width:14px;height:14px;margin:-7px;border-radius:50%;border:1.5px solid #7c5cff}
+.hb-cb__rings span{width:14px;height:14px;margin:-7px;border-radius:50%;border:1.5px solid #e8b04b}
 .hb-cb.is-boom .hb-cb__rings span{animation:hbCbRing .6s ease-out var(--d,0s) forwards}
-.hb-cb__sparks span{width:12px;height:1.5px;margin-top:-.75px;border-radius:1px;background:linear-gradient(90deg,#7c5cff,transparent);transform-origin:left center}
+.hb-cb__sparks span{width:12px;height:1.5px;margin-top:-.75px;border-radius:1px;background:linear-gradient(90deg,#e8b04b,transparent);transform-origin:left center}
 .hb-cb.is-boom .hb-cb__sparks span{animation:hbCbSpark .5s ease-out forwards}
 @keyframes hbCbParticle{0%{transform:translate(0,0) scale(1);opacity:1}75%{opacity:1}100%{transform:translate(var(--x),var(--y)) scale(.6);opacity:0}}
 @keyframes hbCbRing{0%{transform:scale(.2);opacity:.7}100%{transform:scale(2.6);opacity:0}}
 @keyframes hbCbSpark{0%{transform:rotate(var(--r)) translateX(3px) scaleX(.7);opacity:1}100%{transform:rotate(var(--r)) translateX(20px) scaleX(0);opacity:0}}
 @media(prefers-reduced-motion:reduce){.hb-cb__particles span,.hb-cb__rings span,.hb-cb__sparks span{animation:none!important}}
 `
-export function CopyBoom({ value, title = 'Copy', className }) {
+export function CopyBoom({ value, title = 'Copy', className, size, ink }) {
   const [boom, setBoom] = useState(false)
   useEffect(() => {
     if (document.getElementById('hb-boom-kf')) return
@@ -376,6 +361,7 @@ export function CopyBoom({ value, title = 'Copy', className }) {
   }
   return (
     <button type="button" onClick={onCopy} aria-label={title} title={boom ? 'Copied!' : title}
+      style={{ ...(size ? { width: size, height: size } : null), ...(ink ? { color: ink } : null) }}
       className={cn('hb-cb relative inline-flex size-[15px] shrink-0 items-center justify-center align-[-3px] text-zinc-400 transition-colors hover:text-zinc-200', boom && 'is-boom', className)}>
       <svg className="hb-cb__copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <rect x="9" y="9" width="11" height="11" rx="2" />
@@ -394,41 +380,31 @@ export function CopyBoom({ value, title = 'Copy', className }) {
 }
 
 // A live streaming console — dark code-window for action WS logs.
-export function ActionConsole({ entry, title = 'output', onClose }) {
+export function ActionConsole({ entry, title = 'output', onClose, className }) {
   const ref = useRef(null)
   const [closed, setClosed] = useState(false)
-  const [count, setCount] = useState(5)
-  const [autoClose, setAutoClose] = useState(true)
   const status = entry && entry.status
   useEffect(() => { const el = ref.current; if (el) el.scrollTop = el.scrollHeight }, [entry && entry.logs && entry.logs.length])
-  // a fresh run re-opens the console and re-arms the auto-close
-  useEffect(() => { if (status === 'running') { setClosed(false); setAutoClose(true); setCount(5) } }, [status])
-  // on success, count down from 5s then close (unless the user chose to keep it open); failures stay open
-  useEffect(() => {
-    if (status !== 'done' || !autoClose) return
-    let c = 5; setCount(c)
-    const iv = setInterval(() => { c -= 1; setCount(c); if (c <= 0) { clearInterval(iv); setClosed(true); onClose && onClose() } }, 1000)
-    return () => clearInterval(iv)
-  }, [status, autoClose])
+  // a fresh run re-opens the console; it never closes on its own — success and
+  // failure both stay on screen until dismissed
+  useEffect(() => { if (status === 'running') setClosed(false) }, [status])
   if (closed) return null
   if (!entry || !entry.logs || (!entry.logs.length && status === 'idle')) return null
   const color = (s) => s === 'ok' ? 'text-emerald-400' : s === 'stderr' ? 'text-rose-400' : s === 'cmd' ? 'text-sky-300' : 'text-zinc-300'
   return (
-    <div className="cl-pop mt-3 overflow-hidden rounded-xl border border-white/10 shadow-sm">
+    <div className={cn('cl-pop mt-3 overflow-hidden rounded-xl border border-white/10 shadow-sm', className)}>
       <div className="flex items-center gap-1.5 border-b border-white/10 bg-zinc-900 px-3 py-2">
         <span className="size-2.5 rounded-full bg-red-400/70" /><span className="size-2.5 rounded-full bg-amber-400/70" /><span className="size-2.5 rounded-full bg-green-400/70" />
         <span className="cl-mono ml-2 text-[10.5px] text-zinc-400">{title}{status === 'running' ? ' · running…' : status === 'done' ? ' · done' : status === 'failed' ? ' · failed' : ''}</span>
       </div>
-      <div ref={ref} className="cl-mono max-h-56 overflow-auto bg-zinc-950 p-3 text-[11.5px] leading-relaxed">
+      <div ref={ref} className="cl-mono max-h-56 overflow-auto bg-zinc-950 px-3 pb-4 pt-3 text-[11.5px] leading-relaxed">
         {entry.logs.map((l, i) => <div key={i} className={cn('whitespace-pre-wrap break-words', color(l.stream))}>{l.line}</div>)}
-        {status === 'running' && <div className="text-zinc-600">▌</div>}
+        {status === 'running' && <div className="cl-cursor text-zinc-500">▌</div>}
       </div>
       {status === 'done' && (
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-emerald-500/25 bg-emerald-500/10 px-3.5 py-3">
           <span className="inline-flex items-center gap-2 text-[15px] font-bold text-emerald-400"><Icon name="check" size={18} /> All done — everything worked.</span>
-          {autoClose
-            ? <span className="cl-mono text-[11px] text-zinc-400">closing in {count}s · <button onClick={() => setAutoClose(false)} className="underline decoration-zinc-600 underline-offset-2 transition-colors hover:text-zinc-200">keep open</button></span>
-            : <button onClick={() => { setClosed(true); onClose && onClose() }} className="cl-mono text-[11px] text-zinc-400 underline decoration-zinc-600 underline-offset-2 transition-colors hover:text-zinc-200">close</button>}
+          <button onClick={() => { setClosed(true); onClose && onClose() }} className="cl-mono text-[11px] text-zinc-400 underline decoration-zinc-600 underline-offset-2 transition-colors hover:text-zinc-200">close</button>
         </div>
       )}
       {status === 'failed' && (

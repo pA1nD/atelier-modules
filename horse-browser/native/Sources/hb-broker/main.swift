@@ -118,6 +118,9 @@ func runBw(_ args: [String], session: String? = nil, extraEnv: [String: String] 
     // user never runs a bare `bw login` that would print the session token to their
     // terminal — and a personal `bw logout` can't disturb the broker.
     env["BITWARDENCLI_APPDATA_DIR"] = APP_SUPPORT.appendingPathComponent("bw-appdata").path
+    // bw is a Node CLI — on machines where Node's happy-eyeballs prefers a broken
+    // IPv6 path, its fetches stall/fail (empty-reason FetchError); prefer IPv4.
+    env["NODE_OPTIONS"] = (((env["NODE_OPTIONS"] ?? "") + " --dns-result-order=ipv4first")).trimmingCharacters(in: .whitespaces)
     p.environment = env
     let out = Pipe(), err = Pipe(); p.standardOutput = out; p.standardError = err
     p.standardInput = FileHandle.nullDevice   // never wait on stdin (bw prompts → EOF, not hang)
@@ -153,12 +156,83 @@ func runBwInteractive(_ args: [String], extraEnv: [String: String] = [:]) -> Int
     var env = ProcessInfo.processInfo.environment
     for (k, v) in extraEnv { env[k] = v }
     env["BITWARDENCLI_APPDATA_DIR"] = APP_SUPPORT.appendingPathComponent("bw-appdata").path
+    env["NODE_OPTIONS"] = (((env["NODE_OPTIONS"] ?? "") + " --dns-result-order=ipv4first")).trimmingCharacters(in: .whitespaces)
     p.environment = env
-    p.standardOutput = FileHandle.nullDevice   // discard the session-key print — never on screen
-    p.standardError = FileHandle.standardError  // bw's 2FA prompts stay visible
+    // bw's interactive prompts (inquirer) write to STDOUT — discard it and the
+    // user stares at a blank line while bw waits for the 2FA code (the invisible-
+    // prompt hang). But the session key ALSO prints to stdout on success. So
+    // stdout streams through a REDACTOR: prompt chunks pass through live, any
+    // line carrying the session key (or key-shaped material) is suppressed.
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = FileHandle.standardError
     p.standardInput = FileHandle.standardInput  // the user types the emailed / authenticator code
-    do { try p.run() } catch { return 127 }
+    // Redaction across chunk boundaries. bw's session key can arrive split across two
+    // readabilityHandler callbacks; redacting each raw chunk (the old code) could print
+    // a fragment that carries neither the "BW_SESSION" marker nor a full 60-char run.
+    // We can't "buffer until newline" wholesale either: bw's 2FA PROMPTS have no trailing
+    // newline (buffering them would re-hide the prompt and hang the login). So:
+    //   • complete lines (up to the last newline) are redacted and emitted — a key line
+    //     is only complete once its newline arrives, so a split key is caught here;
+    //   • the trailing incomplete line is streamed live AS A PROMPT — unless it ends in a
+    //     long base64 run (a probable key fragment before its newline), which we withhold
+    //     until the newline completes the line and the redactor fires.
+    let LF: UInt8 = 0x0A
+    var buf = Data()          // the current line-in-progress (after the last emitted newline)
+    var streamed = 0          // bytes of `buf` already streamed as a live prompt
+    func isSecret(_ l: String) -> Bool {
+      l.contains("BW_SESSION") || l.range(of: "[A-Za-z0-9+/=]{60,}", options: .regularExpression) != nil
+    }
+    func looksLikeKeyFragment(_ l: String) -> Bool {   // ends in a 20+ base64 run → probably a key mid-arrival
+      l.range(of: "[A-Za-z0-9+/=]{20,}$", options: .regularExpression) != nil
+    }
+    func write(_ s: String) { if let d = s.data(using: .utf8) { FileHandle.standardOutput.write(d) } }
+    out.fileHandleForReading.readabilityHandler = { fh in
+      let d = fh.availableData
+      if d.isEmpty {
+        // EOF: flush the final line (may be a newline-less key at exit) through the redactor.
+        if !buf.isEmpty {
+          let line = String(data: buf, encoding: .utf8) ?? ""
+          if isSecret(line) { write("[session key hidden]") }
+          else if buf.count > streamed { write(String(data: buf.subdata(in: (buf.startIndex + streamed)..<buf.endIndex), encoding: .utf8) ?? "") }
+        }
+        buf.removeAll(); fh.readabilityHandler = nil; return
+      }
+      buf.append(d)
+      // emit every COMPLETE line, redacted, writing only the not-yet-streamed suffix to avoid a dup
+      while let nl = buf.firstIndex(of: LF) {
+        let lineData = buf.subdata(in: buf.startIndex..<nl)
+        let line = String(data: lineData, encoding: .utf8) ?? ""
+        if isSecret(line) { write("[session key hidden]\n") }
+        else {
+          let already = min(streamed, lineData.count)
+          write((String(data: lineData.subdata(in: (lineData.startIndex + already)..<lineData.endIndex), encoding: .utf8) ?? "") + "\n")
+        }
+        buf.removeSubrange(buf.startIndex...nl)
+        streamed = 0
+      }
+      // stream the trailing prompt (delta only), unless it looks like a key fragment mid-arrival
+      if buf.count > streamed {
+        let partial = String(data: buf, encoding: .utf8) ?? ""
+        if !looksLikeKeyFragment(partial) {
+          write(String(data: buf.subdata(in: (buf.startIndex + streamed)..<buf.endIndex), encoding: .utf8) ?? "")
+          streamed = buf.count
+        }
+      }
+    }
+    do { try p.run() } catch { out.fileHandleForReading.readabilityHandler = nil; return 127 }
+    // Foundation's Process puts the child in its OWN process group — the moment
+    // bw touches the terminal (raw mode for the 2FA code input) the kernel stops
+    // it with SIGTTOU/SIGTTIN as a "background" job and everything freezes (state
+    // T in ps). Hand the child's group the terminal foreground while it runs,
+    // then take it back. (Ignore SIGTTOU around tcsetpgrp — calling it from the
+    // about-to-be-background group would otherwise stop US the same way.)
+    signal(SIGTTOU, SIG_IGN)
+    tcsetpgrp(STDIN_FILENO, p.processIdentifier)
     p.waitUntilExit()
+    tcsetpgrp(STDIN_FILENO, getpgrp())
+    signal(SIGTTOU, SIG_DFL)
+    out.fileHandleForReading.readabilityHandler = nil
     return p.terminationStatus
   }
 }
@@ -1144,7 +1218,9 @@ func handle(_ req: [String: Any]) -> [String: Any] {
     audit(["event": "reset", "session": session, "result": "ok"])
     return ["ok": true]
 
-  case "type_secret", "type_totp", "get_totp", "get_secret":
+  // get_secret was removed: the broker NEVER returns a password, it only types it.
+  // A value is returned only for get_totp (self-expiring, single-use).
+  case "type_secret", "type_totp", "get_totp":
     return handleCredOp(op, req, session: session)
 
   default:
@@ -1232,7 +1308,7 @@ func handleCredOp(_ op: String, _ req: [String: Any], session: String) -> [Strin
     result["typed"] = value.count
     result["field"] = field
   } else {
-    result["value"] = value      // get_totp / get_secret hand the value back over the socket
+    result["value"] = value      // get_totp only — the self-expiring code handed back over the socket
     result["field"] = field
   }
   var okEv: [String: Any] = ["event": op, "cred": cred, "item": item.name, "result": "ok",
@@ -1365,21 +1441,22 @@ func cmdSetup() {
     guard !email.isEmpty else { print("email required"); exit(1) }
     guard let pwC = getpass("Master password (hidden): ") else { exit(1) }
     let pw = String(cString: pwC)
-    let method = prompt("Two-step method [Enter = none · 0 = authenticator · 1 = email · 3 = yubikey]: ")
 
-    if method.isEmpty {
-      // No two-step — non-interactive, output captured (token never printed).
-      let li = runBw(["login", email, "--passwordenv", "HB_BW_PW"], extraEnv: ["HB_BW_PW": pw])
-      guard li.code == 0 else { print("Login failed: \(li.err.isEmpty ? li.out : li.err)"); exit(1) }
-    } else {
-      // Two-step — hand bw the terminal so it runs its OWN flow: SEND the code (email) and
-      // prompt for it live. Passing `--code` up front can't work for email 2FA — no code
-      // exists until bw emails it, which is the bug we're fixing. stdout is discarded, so
-      // the session key bw prints on success still never lands on screen.
-      if method == "1" { print("\nBitwarden will email a 6-digit code to the account's address and ask for it below.") }
-      else { print("\nBitwarden will ask for your two-step code below — read it from your authenticator / key.") }
-      let rc = runBwInteractive(["login", email, "--method", method, "--passwordenv", "HB_BW_PW"], extraEnv: ["HB_BW_PW": pw])
-      guard rc == 0 else { print("\nTwo-step login didn't complete. Re-run `hb-broker setup` to try again."); exit(1) }
+    // Login ALWAYS runs interactively: bw owns the terminal (stderr + stdin) so
+    // whatever two-step flow the account enforces happens visibly — email codes
+    // get SENT first and prompted for live; authenticator/yubikey prompt directly;
+    // no two-step just logs in without asking. Asking the user to predict their
+    // method up front was the old trap: "none" + an account that enforces email
+    // 2FA made bw prompt into a captured pipe and hang forever. stdout stays
+    // discarded, so the session key bw prints on success never lands on screen.
+    print("\nIf your account has two-step login — or Bitwarden wants to verify this as a")
+    print("NEW DEVICE (fresh installs always look new) — it asks below; email codes are")
+    print("sent first, then prompted for. Otherwise it logs straight in.")
+    let rc = runBwInteractive(["login", email, "--passwordenv", "HB_BW_PW"], extraEnv: ["HB_BW_PW": pw])
+    guard rc == 0 else {
+      print("\nLogin didn't complete — wrong password, or the two-step code was wrong or")
+      print("expired (a fresh code is sent each attempt). Re-run `hb-broker setup` to try again.")
+      exit(1)
     }
     let un = runBw(["unlock", "--raw", "--passwordenv", "HB_BW_PW"], extraEnv: ["HB_BW_PW": pw])
     guard un.code == 0, !un.out.isEmpty else { print("Unlock failed: \(un.err.isEmpty ? un.out : un.err)"); exit(1) }

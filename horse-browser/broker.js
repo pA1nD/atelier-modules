@@ -30,9 +30,16 @@ export const SOCK = path.join(APP_SUPPORT, 'broker.sock')
 export const AUDIT = path.join(APP_SUPPORT, 'audit.jsonl')
 export const SETUP_CMD = `"${BIN}" setup`
 
-const BUILD = path.join(HERE, 'native', 'build.sh')
-const PLIST_LABEL = 'de.pa1nd.hb-broker'
-const PLIST_PATH = path.join(HOME, 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`)
+// The module version the running daemon was built from — install.sh stamps it.
+// When it differs from the shipped module version, the native code may have
+// changed (e.g. a 2.2.0 upgrade over a 2.1.2 install), so we recompile.
+const VERSION_STAMP = path.join(APP_SUPPORT, '.built-version')
+function shippedVersion() {
+  try { return JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8')).version || '' } catch { return '' }
+}
+function builtVersion() {
+  try { return fs.readFileSync(VERSION_STAMP, 'utf8').trim() } catch { return '' }
+}
 
 const run = (cmd, args, opts = {}) =>
   new Promise((resolve) => execFile(cmd, args, { timeout: 180000, maxBuffer: 8 << 20, ...opts },
@@ -58,49 +65,32 @@ export function brokerCall(req, timeoutMs = 20000) {
 
 export function brokerInstalled() { return fs.existsSync(BIN) }
 
-// ── daemon lifecycle: compile once, install a LaunchAgent, bootstrap it ───────
-// The daemon lives in ~/Library/Application Support — OUTSIDE the module tree —
-// so agent edits and the hot-reload watcher can never touch the running boundary.
-// It runs as a per-user LaunchAgent (GUI session) because the macOS approval prompt needs one.
-function plistXml() {
-  const log = path.join(APP_SUPPORT, 'broker.log')
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>${PLIST_LABEL}</string>
-  <key>ProgramArguments</key><array><string>${BIN}</string><string>serve</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Interactive</string>
-  <key>StandardOutPath</key><string>${log}</string>
-  <key>StandardErrorPath</key><string>${log}</string>
-</dict></plist>
-`
-}
+// ── daemon lifecycle ──────────────────────────────────────────────────────────
+// The WHOLE install lives in native/install.sh — a readable script the setup
+// agent (or the operator) runs deliberately; there is no install API. The
+// module only HEALS an existing daemon: when the binary is already in
+// ~/Library/Application Support, mount re-runs the same script (it skips the
+// compile when the binary exists, refreshes the plist, re-bootstraps launchd).
+export const INSTALL = path.join(HERE, 'native', 'install.sh')
 
-export async function ensureDaemon(ctx, slot, { rebuild = false } = {}) {
-  fs.mkdirSync(path.join(APP_SUPPORT, 'bin'), { recursive: true })
-  fs.mkdirSync(path.dirname(PLIST_PATH), { recursive: true })
-
-  if (rebuild || !fs.existsSync(BIN)) {
-    if (slot.brokerBuilding) return
-    slot.brokerBuilding = true
-    ctx.log('hb-broker: compiling daemon (first run / rebuild)…')
-    const r = await run('/bin/sh', [BUILD])
-    slot.brokerBuilding = false
-    if (r.code !== 0 || !fs.existsSync(BIN)) { ctx.log(`hb-broker: build failed: ${r.err.slice(0, 200)}`); return }
-    ctx.log('hb-broker: daemon built')
+export async function ensureDaemon(ctx) {
+  if (!fs.existsSync(BIN)) return   // never bootstrap a first install — see native/install.sh
+  // A healthy daemon of the CURRENT version is left alone — re-running install.sh
+  // bounces the daemon (drops vault warmth, re-prompts Keychain), so we only do it
+  // when it's actually needed: the daemon isn't answering, OR the shipped module
+  // version moved past what the binary was built from (a module update carrying new
+  // native code — without this, an upgraded install keeps running the OLD daemon).
+  const stale = builtVersion() !== shippedVersion()
+  if (!stale) {
+    const alive = await brokerCall({ op: 'status', session: 'heal' }, 1500)
+    if (alive?.reason !== 'no-broker' && alive?.reason !== 'timeout') return
+    ctx.log('hb-broker: daemon not answering — re-bootstrapping via install.sh')
+  } else {
+    ctx.log(`hb-broker: rebuilding — binary built from ${builtVersion() || '(unstamped)'}, module is ${shippedVersion()}`)
   }
-
-  try { fs.writeFileSync(PLIST_PATH, plistXml()) } catch (e) { ctx.log(`hb-broker: plist write failed: ${e.message}`) }
-  const uid = process.getuid()
-  await run('/bin/launchctl', ['bootout', `gui/${uid}/${PLIST_LABEL}`]).catch(() => {})
-  const b = await run('/bin/launchctl', ['bootstrap', `gui/${uid}`, PLIST_PATH])
-  await run('/bin/launchctl', ['enable', `gui/${uid}/${PLIST_LABEL}`]).catch(() => {})
-  if (b.code !== 0 && !/already|service already loaded/i.test(b.err)) ctx.log(`hb-broker: bootstrap: ${b.err.slice(0, 160)}`)
+  const r = await run('/bin/sh', [INSTALL])
+  if (r.code !== 0) ctx.log(`hb-broker: heal failed: ${(r.err || '').slice(0, 160)}`)
 }
-
-export async function rebuildDaemon(ctx, slot) { return ensureDaemon(ctx, slot, { rebuild: true }) }
 
 // ── live audit feed: stream new audit.jsonl lines over the module WS ──────────
 export function startAuditTail(ctx, slot) {

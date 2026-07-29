@@ -82,7 +82,8 @@ Pure Node builtins, no deps.
 - `GET /site-skills` — the full per-host playbook tree (`domain-skills/<host>/*.md`) with content, for the explorer page; a cheap summary rides the snapshot.
 - `GET /heal-log` — the launcher's incident journal (`~/.config/horse-browser/heal.log`), parsed; a dir watcher pushes the tail on change.
 - `GET /images/:name` — bundled imagery (basename-guarded).
-- `POST /action/:id` — streams over the shell WS: `install-horse-browser` (**npm — `@pa1nd/horse-browser`**, install and update are the same command; postinstall builds the vendored harness venv; applies `claude-md.sh` after), `harness-setup` (`horse-browser harness-setup`, rebuilds the venv), `install-browser-config` (`claude-md.sh apply`), `install-deskpad` (brew cask) + `launch-deskpad`. Outward actions refuse without `{ confirm: true }`; children tracked + killed on hot-reload/shutdown.
+- `POST /action/:id` — the two module-owned actions that remain (installation itself is an agent task via `GET /setup.md`, not a button): `install-browser-config` (`claude-md.sh apply` — writes the always-on browser rule) and `launch-deskpad`. Streams over the shell WS; `install-browser-config` refuses without `{ confirm: true }`; children tracked + killed on hot-reload/shutdown.
+- `GET /setup.md` (`?part=browser|credentials|display`, `&bare=1`) — the agent-run install skill, generated with this machine's live state; the setup wizard renders it. `GET /verbs` — every loaded verb by tier (cached; empty when horse-browser isn't installed). `GET /site-skills` — the per-host playbook tree.
 
 ## Credentials — the Bitwarden broker
 
@@ -90,10 +91,12 @@ The ENFORCED path: a signed local daemon (`native/`, compiled on first run into
 `~/Library/Application Support/hb-broker` — outside the module tree) holds the
 only Bitwarden session and gates every credential by the collection it lives in
 (`auto` | `ask` | `never`) + an origin check read from the browser + a native
-macOS approval. Agents call `type_secret` / `type_totp` (plus `creds`,
-`get_secret`, `get_totp` for non-web) — the password is typed over the broker's
-own CDP session, never entering agent code. The old `hb_*` names live on as
-warn-once deprecation shims. The origin check matches on the **registrable
+macOS approval. Agents call `list_login_profiles` (the non-secret allow-list),
+`type_secret` / `type_totp` — the password/code is typed over the broker's own
+CDP session, never entering agent code. `get_totp` returns the self-expiring
+2FA code as a fallback for broken widgets; there is **no** `get_secret` — a
+password is only ever typed, never returned. The old `hb_*` / `creds` names
+live on as warn-once deprecation shims. The origin check matches on the **registrable
 domain** (`accounts.google.com` covers `mail.google.com`; a ccTLD second-level
 list keeps `foo.co.uk` from matching `bar.co.uk`). Cold discovery is served
 from a 0600 **reachable-cache** (non-secret metadata, "synced X ago" + Sync
@@ -105,8 +108,7 @@ re-warms silently); Disconnect is the hard cut. The daemon subsystem is
 code-signing, launchd, LocalAuthentication). Needs `bw` + Swift.
 
 - `GET /broker/status` · `GET|POST /broker/policy` · `GET /broker/groups` · `POST /broker/refresh` · `GET /broker/reachable` · `GET /broker/audit` · `POST /broker/{lock,rebuild,disconnect}` — the broker control surface (status pushed over the shell WS; audit tailed live).
-- `GET|POST /hints-config` · `GET /hints` · `POST /hints-hook/install` — the credential-hint hook (`~/.config/horse-browser/hints.d/atelier-hb-auth`): on first navigation to a host with a granted credential, it prints "🐴 vault login available" with the exact `type_secret("<item>", target)` line.
-- `POST /helpers/install` · `GET|POST /selfheal` · `GET /state` — the broker verbs ship as a **horse-browser plugin**, `<workspace>/plugins/atelier_login.py` (auto-loaded; precedence core < plugins < the operator's own `agent_helpers.py`). Install migrates any old stub out of `agent_helpers.py` and removes the pre-plugin sibling file; self-heal repairs an absent plugin. The always-on safety rule (`~/.claude/rules/horse-browser-auth.md`) is re-asserted on every status read, independent of the auto-repair toggle — only a foreign file (no marker) is left untouched.
+- `POST /agent-integration {enabled}` · `GET /hints-config` · `GET /hints` — the **agent-integration package**: one toggle installs/removes three module-templated files together — the verb plugin (`<workspace>/plugins/atelier_login.py`, auto-loaded; precedence core < plugins < the operator's own `agent_helpers.py`), the credential-hint hook (`~/.config/horse-browser/hints.d/atelier-hb-auth`, prints "🐴 vault login available" with the exact `type_secret(...)` line on a granted host), and the always-on safety rule (`~/.claude/rules/horse-browser-auth.md`). While the toggle is on, `/state` + `/hints-config` reads keep all three current; a foreign file (no marker) is never touched. `POST /authrule/install` replaces a foreign rule. `GET /state` reports the plugin/verb status the skill points at.
 - `GET /skill.md` — the "hand this to an agent" login skill, generated live with this machine's URL.
 
 ## One npm package, harness included
