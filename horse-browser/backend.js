@@ -777,7 +777,18 @@ any agent's context. There is no install API — everything below is a readable
 script or a file the module writes. Two moments in here are the operator's
 alone — they're marked; stop and hand over when you reach them.
 
-1 · Read, then run the install script (compiles the Swift daemon out of tree,
+1 · Install the Bitwarden CLI (\`bw\`) — the daemon shells it for every vault
+read, so it must be on PATH before setup. Use this machine's package manager
+(don't assume brew):
+
+\`\`\`
+brew install bitwarden-cli    # or: npm i -g @bitwarden/cli · your distro's pkg
+\`\`\`
+
+Verify: \`bw --version\` prints a version. (Don't run \`bw login\` yourself — the
+daemon owns the session; step 4 connects it.)
+
+2 · Read, then run the install script (compiles the Swift daemon out of tree,
 ad-hoc signs it with the hardened runtime, writes the LaunchAgent plist, and
 bootstraps it under launchd — \`--rebuild\` forces a recompile; needs the Xcode
 Command Line Tools):
@@ -799,7 +810,7 @@ feature — it tells the operator the boundary binary changed. Never approve
 these prompts yourself: an agent authorizing its own access to the vault
 token would defeat the entire boundary.
 
-2 · The agent-side package — ONE unit of three module-templated files (the
+3 · The agent-side package — ONE unit of three module-templated files (the
 module knows its own loopback URL and canonical verb code, which is why this
 is an endpoint, not a script): the verb plugin
 (\`agent-workspace/plugins/atelier_login.py\`), the per-site hint hook
@@ -812,7 +823,7 @@ panel, and the module keeps all three current while it's on:
 curl -X POST ${base}/agent-integration -H 'Content-Type: application/json' -d '{"enabled":true}'
 \`\`\`
 
-3 · HAND OVER to the operator:
+4 · HAND OVER to the operator:
 
 1. The OPERATOR runs \`${SETUP_CMD}\` in their own terminal — the Bitwarden
    master password must never pass through you.
@@ -820,7 +831,7 @@ curl -X POST ${base}/agent-integration -H 'Content-Type: application/json' -d '{
 
 Verify: \`${base}/broker/status\` → \`installed\` and \`ok\` true, then \`vault.hasSession\`.
 
-4 · Teach yourself the login skill. The always-on rule only reaches sessions
+5 · Teach yourself the login skill. The always-on rule only reaches sessions
 STARTED after this install — your own session predates it, so read the skill
 directly (generated live, includes the exact verbs and the flow):
 
