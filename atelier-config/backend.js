@@ -446,12 +446,22 @@ export default {
     // The instance root, resolved the same way the shell's own resolveRoot does —
     // NOT from this module's folder: as a path-mount the module can live anywhere
     // (the dock could assume dirname(moduleDir) only because it shipped inside
-    // its instance). ATELIER_ROOT is explicit; otherwise the shell infers the
-    // root as the parent of the folder the server runs from (PWD survives the
-    // atelier/ symlink; argv[1] is the server.js path as a launchd fallback).
-    const instanceRoot = process.env.ATELIER_ROOT
-      ? path.resolve(process.env.ATELIER_ROOT)
-      : path.resolve(process.env.PWD || path.dirname(process.argv[1] || '.'), '..')
+    // its instance). All three shell branches, in order: 1. ATELIER_ROOT is
+    // explicit. 2. Shell installed as a dependency — argv[1] (the server entry,
+    // e.g. <instance>/node_modules/.bin/atelier) sits under the instance's
+    // node_modules; the instance is the folder that owns it (slice at the FIRST
+    // marker so a pnpm nested store still resolves to the consumer project).
+    // 3. Subfolder layout — the parent of PWD (which survives the atelier/
+    // symlink; argv[1]'s dir as a launchd fallback). Skipping branch 2 was the
+    // bug that daemonized a dependency-mode instance with PWD/.. — one level
+    // too high, every module gone.
+    const instanceRoot = (() => {
+      if (process.env.ATELIER_ROOT) return path.resolve(process.env.ATELIER_ROOT)
+      const entry = path.resolve(process.argv[1] || '.')
+      const i = entry.indexOf(`${path.sep}node_modules${path.sep}`)
+      if (i !== -1) return entry.slice(0, i)
+      return path.resolve(process.env.PWD || path.dirname(entry), '..')
+    })()
     const configFile = path.join(instanceRoot, 'atelier.config.json')
     const home = process.env.HOME || ''
 
@@ -1085,21 +1095,41 @@ export default {
         ip = (j.TailscaleIPs || []).find((a) => a.includes('.')) || null
       } catch {}
       const sv = await sh(`${JSON.stringify(bin)} serve status --json 2>/dev/null`, { timeoutMs: 6000 })
+      // Two kinds of serve entries: raw TCP forwards (the port shares below)
+      // and web handlers — TLS-terminating reverse proxies (`serve --https=N`),
+      // whose TCP entry is {HTTPS:true} and must not count as a port share.
       let sharedPorts = new Set()
-      try { sharedPorts = new Set(Object.keys(JSON.parse(sv.stdout).TCP || {}).map(Number)) } catch {
+      const web = []   // { port, target, targetPort } per TLS proxy
+      try {
+        const sj = JSON.parse(sv.stdout)
+        const tcp = sj.TCP || {}
+        sharedPorts = new Set(Object.keys(tcp).filter((p) => !(tcp[p] || {}).HTTPS).map(Number))
+        for (const [hostPort, cfg] of Object.entries(sj.Web || {})) {
+          const proxy = cfg && cfg.Handlers && cfg.Handlers['/'] && cfg.Handlers['/'].Proxy
+          if (!proxy) continue
+          const sPort = Number((hostPort.match(/:(\d+)$/) || [])[1] || 443)
+          const tPort = Number((String(proxy).match(/:(\d+)\/?$/) || [])[1] || 0) || null
+          web.push({ port: sPort, target: proxy, targetPort: tPort })
+        }
+      } catch {
         const t = await sh(`${JSON.stringify(bin)} serve status 2>/dev/null`, { timeoutMs: 6000 })
         if (t.stdout.includes(`:${port}`) && t.stdout.includes(`localhost:${port}`)) sharedPorts.add(Number(port))
       }
       const active = sharedPorts.has(Number(port))
       const listeners = await atelierListeners()
       const ports = listeners.map((p) => ({ ...p, shared: sharedPorts.has(p.port) }))
+      const httpsShare = web.find((w) => w.targetPort === Number(port)) || null
       // Forwards on this machine that aren't any of this Atelier's listeners —
       // counted so nothing is silently hidden, but never listed here.
       const others = [...sharedPorts].filter((x) => !listeners.some((p) => p.port === x)).length
+        + web.filter((w) => w !== httpsShare).length
       const desc = tailnetDescriptor(bin)
       res.json({
         installed: true, state, active, port, host, ip, ports, others,
         urls: active ? [host && `http://${host}:${port}`, ip && `http://${ip}:${port}`].filter(Boolean) : [],
+        https: httpsShare && host
+          ? { active: true, port: httpsShare.port, target: httpsShare.target, url: `https://${host}${httpsShare.port === 443 ? '' : `:${httpsShare.port}`}` }
+          : { active: false },
         agent: { label: desc.label, ...(await agentRuntime(desc.label) || {}) },
       })
     })
@@ -1125,12 +1155,23 @@ export default {
         logEvent(r.code === 0 ? 'ok' : 'warn', action === 'enable' ? `Tailnet sharing on (:${target})` : `Tailnet sharing off (:${target})`)
         return res.json({ ok: r.code === 0, log: (r.stdout + r.stderr).trim() })
       }
+      // The TLS proxy: a valid cert on the MagicDNS name, port 443. Needs
+      // "HTTPS Certificates" enabled once in the tailnet admin console — when
+      // it isn't, the CLI errors and that message surfaces to the page as-is.
+      if (action === 'https-enable' || action === 'https-disable') {
+        const cmd = action === 'https-enable'
+          ? `${JSON.stringify(bin)} serve --bg --https=443 http://127.0.0.1:${port}`
+          : `${JSON.stringify(bin)} serve --https=443 off`
+        const r = await sh(cmd, { timeoutMs: 20000 })
+        logEvent(r.code === 0 ? 'ok' : 'warn', action === 'https-enable' ? 'Tailnet HTTPS on (:443)' : 'Tailnet HTTPS off')
+        return res.json({ ok: r.code === 0, log: (r.stdout + r.stderr).trim() })
+      }
       if (action === 'agent-install' || action === 'agent-uninstall') {
         const r = await managedPlistAction(tailnetDescriptor(bin), action === 'agent-install' ? 'install' : 'uninstall')
         logEvent(r.ok ? 'ok' : 'warn', action === 'agent-install' ? 'Tailnet login re-assert installed' : 'Tailnet login re-assert removed')
         return res.json(r)
       }
-      res.json({ ok: false, log: 'action must be enable|disable|agent-install|agent-uninstall' }, 400)
+      res.json({ ok: false, log: 'action must be enable|disable|https-enable|https-disable|agent-install|agent-uninstall' }, 400)
     })
 
     // ---- activity log ----------------------------------------------------------

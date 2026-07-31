@@ -698,6 +698,18 @@ function PortRow({ p, host, busy, onShare, onStop }) {
   )
 }
 
+function CopyChip({ text }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1400) } catch {}
+  }
+  return (
+    <button onClick={copy} title="Copy address" className="shrink-0 cursor-pointer rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-950/[0.06] hover:text-zinc-700 dark:hover:bg-white/10 dark:hover:text-zinc-200">
+      <Icon name={copied ? 'check' : 'copy'} size={13} className={copied ? 'text-emerald-500' : ''} />
+    </button>
+  )
+}
+
 // Share this instance over Tailscale: tailscale listens on the tailnet address
 // and forwards to localhost — atelier itself stays loopback-bound, the LAN
 // stays blocked. Everything degrades gracefully when Tailscale is absent.
@@ -769,6 +781,44 @@ function Tailnet() {
           </p>
         )}
         {log && <pre className="mt-3 overflow-auto rounded-lg border border-red-500/30 bg-red-500/[0.06] px-3 py-2 font-mono text-[11px] text-red-600 dark:text-red-400">{log}</pre>}
+      </div>
+
+      <div className="rounded-2xl border border-zinc-950/10 bg-white p-5 shadow-sm shadow-zinc-950/[0.03] dark:border-white/10 dark:bg-white/[0.02] dark:shadow-none">
+        <div className="flex items-center gap-2">
+          <Dot color={d.https && d.https.active ? 'emerald' : 'zinc'} ping={!!(d.https && d.https.active)} />
+          <h3 className="text-base font-semibold text-zinc-950 dark:text-white">HTTPS address</h3>
+        </div>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          A reverse proxy on tailnet port <span className="font-mono">443</span>: Tailscale listens on your MagicDNS name with a real
+          Let’s Encrypt certificate, terminates the TLS there, and forwards plain HTTP to this Atelier on localhost. You get a clean{' '}
+          <span className="font-mono">https://</span> URL with no port and secure-context browser APIs; the wire is WireGuard-encrypted
+          either way. Requires “HTTPS Certificates” enabled once for the tailnet in the{' '}
+          <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer" className="text-blue-600 underline decoration-blue-600/30 underline-offset-2 dark:text-blue-400">Tailscale admin console</a> —
+          if enabling fails with “does not support getting TLS certs”, that toggle is what’s missing.
+        </p>
+        {d.https && d.https.active ? (
+          <div className="mt-3 flex items-center gap-3 py-1">
+            <Dot color="emerald" ping />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm text-zinc-800 dark:text-zinc-200">:{d.https.port}</span>
+                <span className="truncate text-sm text-zinc-500 dark:text-zinc-400">TLS terminated here, proxied to this Atelier</span>
+              </div>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
+                <a href={d.https.url} target="_blank" rel="noreferrer" className="truncate text-blue-600 underline decoration-blue-600/30 underline-offset-2 dark:text-blue-400">{d.https.url}</a>
+                <span className="shrink-0 text-zinc-400 dark:text-zinc-500">→</span>
+                <span className="shrink-0 text-zinc-500 dark:text-zinc-400" title="plain HTTP on this machine only — never leaves localhost">{d.https.target}</span>
+                <span className="shrink-0 text-zinc-400 dark:text-zinc-500">(:{d.port} this Atelier)</span>
+              </div>
+            </div>
+            <CopyChip text={d.https.url} />
+            <Button outline onClick={() => act('https-disable')} disabled={busy}>{busy ? 'Working…' : 'Turn off'}</Button>
+          </div>
+        ) : (
+          <div className="mt-4">
+            <Button onClick={() => act('https-enable')} disabled={busy || !running}>{busy ? 'Working…' : 'Enable HTTPS'}</Button>
+          </div>
+        )}
       </div>
 
       <div className="rounded-2xl border border-zinc-950/10 bg-white p-5 shadow-sm shadow-zinc-950/[0.03] dark:border-white/10 dark:bg-white/[0.02] dark:shadow-none">
