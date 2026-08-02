@@ -60,6 +60,10 @@ let KEYCHAIN_ACCOUNT = "bw-session"
 let CDP_HOST = "127.0.0.1"
 let CDP_PORT = ProcessInfo.processInfo.environment["HB_CDP_PORT"] ?? "9223"
 
+// How often the daemon refreshes an already-warm vault from the Bitwarden server (seconds).
+// Warm-only — see Vault.periodicSyncIfWarm. 0 disables it; default 10 min.
+let SYNC_INTERVAL: TimeInterval = max(0, Double(ProcessInfo.processInfo.environment["HB_SYNC_INTERVAL_SEC"] ?? "") ?? 600)
+
 func ensureAppSupport() {
   try? FileManager.default.createDirectory(at: APP_SUPPORT, withIntermediateDirectories: true)
   // Owner-only: policy.json / audit.jsonl hold no secret, but there's no reason to
@@ -771,11 +775,33 @@ final class Vault {
     return ["ok": true, "items": [], "syncedAt": 0, "neverSynced": true]
   }
 
-  // Explicit sync: warm the vault (unlock → keychain, silent) + rebuild the index, which rewrites
-  // the reachable cache, then return the fresh reachable result. This is the "Sync now" action.
+  // Pull the latest vault state from the Bitwarden server into the local CLI snapshot.
+  // `bw list`/`bw get` read a LOCAL cache that only advances on login or an explicit
+  // `bw sync` — so without this an item added on another device is invisible here no
+  // matter how often the index is rebuilt. Runs only on the user-initiated "pull latest"
+  // paths (Sync now / rescan), never the passive warm-on-fill path (keeps fills fast).
+  private func syncVault(session s: String) {
+    let r = runBw(["sync"], session: s)
+    if r.code != 0 { log("vault: bw sync failed — \(r.err.trimmingCharacters(in: .whitespacesAndNewlines))") }
+  }
+
+  // Explicit sync: warm the vault (unlock → keychain, silent) + pull from the server +
+  // rebuild the index, which rewrites the reachable cache, then return the fresh reachable
+  // result. This is the "Sync now" action.
   func syncReachable() -> [String: Any] {
-    if let s = ensureSession() { buildIndex(session: s) }
+    if let s = ensureSession() { syncVault(session: s); buildIndex(session: s) }
     return reachableResult()
+  }
+
+  // Background refresh for an ALREADY-warm vault: pull the server's latest into the local
+  // snapshot so a login added on another device becomes reachable without a manual "Sync now".
+  // Warm-gated on purpose — never unlocks a cold/idle vault (no Keychain read, no Touch ID, so
+  // the cold-by-default posture is unchanged), and a silent no-op when cold. The session key is
+  // already in memory, so this is a pure network round-trip.
+  func periodicSyncIfWarm() {
+    guard isWarm, let s = queue.sync(execute: { session }) else { return }
+    syncVault(session: s)
+    buildIndex(session: s)
   }
 
   // The picker WITHOUT unlocking: read the cached (non-secret) group metadata and
@@ -786,9 +812,9 @@ final class Vault {
     return arr.map { var g = $0; g["tier"] = Policy.shared.tierOfGroup((g["key"] as? String) ?? "")?.rawValue ?? ""; return g }
   }
 
-  // Rescan the live vault (unlock → Touch ID), refresh the cache, and return it.
+  // Rescan the live vault (unlock → Touch ID), pull from the server, refresh the cache, return it.
   func rescanGroups() -> [[String: Any]] {
-    if let s = ensureSession() { buildIndex(session: s) }
+    if let s = ensureSession() { syncVault(session: s); buildIndex(session: s) }
     return cachedGroups() ?? []
   }
 
@@ -1369,6 +1395,21 @@ func serve() {
   DispatchQueue.global().async { _ = keychainReadToken(reason: "startup ACL check") }
 
   signal(SIGPIPE, SIG_IGN)
+
+  // Keep an already-warm vault fresh: a warm-only periodic `bw sync` so a login added on
+  // another device becomes reachable without a manual "Sync now". Never unlocks a cold/idle
+  // vault (posture unchanged) — it's a no-op until an agent has warmed it, then runs silently
+  // off the request path. HB_SYNC_INTERVAL_SEC=0 disables it. Retained for the process lifetime.
+  var syncTimer: DispatchSourceTimer? = nil
+  if SYNC_INTERVAL > 0 {
+    let t = DispatchSource.makeTimerSource(queue: DispatchQueue.global())
+    t.schedule(deadline: .now() + SYNC_INTERVAL, repeating: SYNC_INTERVAL, leeway: .seconds(30))
+    t.setEventHandler { vault.periodicSyncIfWarm() }
+    t.resume()
+    syncTimer = t
+    log("warm-vault auto-sync every \(Int(SYNC_INTERVAL))s")
+  }
+  _ = syncTimer   // keep alive
 
   // Handle each connection on a background thread so a slow op (a fill, a rescan,
   // a Touch ID prompt) never blocks cached status/groups/policy reads. bw access is
