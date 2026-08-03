@@ -95,6 +95,11 @@ export function useDark() {
 // it up), single-flight, 10s abort, hidden tabs send nothing.
 export function useSnapshot(self) {
   const [snap, setSnap] = useState(null)
+  /* snapErr: a status board that can't read the machine must SAY so. Swallowing this left
+     every consumer rendering "reading your machine…" forever whenever the backend was down
+     (the shell serves a 500 per-module when a backend fails to mount) — the worst possible
+     failure for a board whose whole job is reporting truth. Cleared on the next good read. */
+  const [snapErr, setSnapErr] = useState(null)
   const busyRef = useRef(false)
   const lastRef = useRef(0)
   const refresh = useCallback(async () => {
@@ -102,8 +107,17 @@ export function useSnapshot(self) {
     busyRef.current = true; lastRef.current = Date.now()
     try {
       const r = await fetch(self.api + '/snapshot', { signal: AbortSignal.timeout(10000) })
-      if (r.ok) setSnap(await r.json())
-    } catch {} finally { busyRef.current = false }
+      if (r.ok) { setSnap(await r.json()); setSnapErr(null) }
+      else {
+        let detail = ''
+        try { const b = await r.json(); detail = b && (b.error || b.message) || '' } catch {}
+        setSnapErr(`the module backend answered ${r.status}${detail ? ` — ${detail}` : ''}`)
+      }
+    } catch (e) {
+      setSnapErr(e && e.name === 'TimeoutError'
+        ? 'the module backend did not answer within 10s'
+        : `could not reach the module backend (${(e && e.message) || e})`)
+    } finally { busyRef.current = false }
   }, [self.api])
   useEffect(() => {
     refresh()
@@ -113,7 +127,21 @@ export function useSnapshot(self) {
     document.addEventListener('visibilitychange', onVis)
     return () => { unsub(); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [refresh])
-  return { snap, refresh }
+  return { snap, refresh, snapErr }
+}
+
+/* A board panel that can't load says why, instead of spinning forever. */
+export function LoadError({ what, detail, onRetry }) {
+  return (
+    <div className="rounded-xl border border-amber-400/30 bg-amber-400/[0.06] px-4 py-4 text-[13px] text-amber-300">
+      <div className="font-medium">Couldn't read {what}.</div>
+      <div className="mt-1.5 text-amber-300/80">{detail}</div>
+      <div className="mt-2 text-amber-300/60">This is the board failing to read your machine — not a report that anything on the machine is missing.</div>
+      {onRetry ? (
+        <button type="button" onClick={onRetry} className="mt-3 rounded-md border border-amber-400/30 px-2.5 py-1 text-[12.5px] font-medium text-amber-200 transition hover:bg-amber-400/10">Try again</button>
+      ) : null}
+    </div>
+  )
 }
 
 export function useActions(self) {
@@ -125,7 +153,14 @@ export function useActions(self) {
   const run = useCallback(async (id, body = {}) => {
     setById((s) => ({ ...s, [id]: { status: 'running', logs: [], needsConfirm: null } }))
     const r = await fetch(self.api + '/action/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }))
-    if (r && r.needsConfirm) setById((s) => ({ ...s, [id]: { status: 'confirm', logs: [], needsConfirm: r } }))
+    if (r && r.needsConfirm) { setById((s) => ({ ...s, [id]: { status: 'confirm', logs: [], needsConfirm: r } })); return r }
+    /* The action only ever COMPLETES via an action-done WS frame. If the POST itself failed
+       (backend down, unknown action, a 500) that frame never comes, and the console sat at
+       "running…" with a blinking cursor forever. Land the failure here instead. */
+    if (!r || r.ok === false) {
+      const msg = (r && (r.error || r.reason)) || 'the action could not be started'
+      setById((s) => ({ ...s, [id]: { status: 'failed', logs: [{ stream: 'stderr', line: String(msg) }], needsConfirm: null } }))
+    }
     return r
   }, [self.api])
   return { byId, run }

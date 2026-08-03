@@ -25,7 +25,7 @@
  *   site-skills  the per-host playbook explorer (domain-skills/<host>/*.md).
  */
 
-import { Reveal, ChapterIntro, Step, Icon, ActionConsole, Modal, inkFor, cn, useChromeStyles, useSnapshot, useActions, CopyBoom } from './lib.jsx'
+import { Reveal, ChapterIntro, Step, Icon, ActionConsole, Modal, inkFor, cn, useChromeStyles, useSnapshot, useActions, CopyBoom, LoadError } from './lib.jsx'
 import { AuthPanel, Settings, Accounts, Activity, Skill } from './credentials.jsx'
 
 const { useState, useEffect, useRef } = React
@@ -540,9 +540,17 @@ function CopyCmd({ cmd }) {
 function CompositingCheck({ self, installed = true }) {
   const [res, setRes] = useState(null)
   const [checking, setChecking] = useState(true)
+  /* The probe times a real 1x1 capture, so it can outlive the page — don't set state after
+     unmount, and don't let a stale run clobber a newer one. */
+  const mounted = useRef(true)
+  const runSeq = useRef(0)
+  useEffect(() => () => { mounted.current = false }, [])
   const run = () => {
     setChecking(true)
-    fetch(self.api + '/compositing').then((r) => r.json()).then((d) => { setRes(d); setChecking(false) }).catch(() => { setRes(null); setChecking(false) })
+    const seq = ++runSeq.current
+    fetch(self.api + '/compositing').then((r) => r.json())
+      .then((d) => { if (mounted.current && seq === runSeq.current) { setRes(d); setChecking(false) } })
+      .catch(() => { if (mounted.current && seq === runSeq.current) { setRes(null); setChecking(false) } })
   }
   useEffect(run, [])
   const probe = res?.probe, d = res?.display || {}
@@ -648,7 +656,10 @@ function DeskPadCard({ snap, byId, run }) {
         )}
         {dp?.installed && !dp?.running && (
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => run && run('launch-deskpad')} className="rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>Launch DeskPad</button>
+            <button onClick={() => run && run('launch-deskpad')} disabled={byId?.['launch-deskpad']?.status === 'running'}
+              className="rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60" style={{ background: ACCENT }}>
+              {byId?.['launch-deskpad']?.status === 'running' ? 'launching…' : 'Launch DeskPad'}
+            </button>
             <span className="text-[11px] text-zinc-600">or</span>
             <CopyCmd cmd="open -a DeskPad" />
           </div>
@@ -998,8 +1009,13 @@ function SetupGuide({ snap, self, run, byId, navigate }) {
   const bv = bw?.vault || {}
   const bwReady = !!(bw?.installed && bv.hasSession && bv.bwStatus !== 'no-cli' && bv.bwStatus !== 'unauthenticated')
   const bwDone = bwReady && (bw?.granted || 0) > 0
-  const A = ({ onClick, children }) => (
-    <button onClick={onClick} className="shrink-0 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>{children}</button>
+  /* busy disables the button while its action runs: run() resets logs on every call, so a
+     second click wiped the output of the run still streaming AND started a second child
+     against the same file. */
+  const A = ({ onClick, children, busy }) => (
+    <button onClick={onClick} disabled={!!busy} className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60" style={{ background: ACCENT }}>
+      {busy ? <span className="size-1.5 animate-pulse rounded-full bg-white/80" /> : null}{children}
+    </button>
   )
   // installing is the AGENT's job (the top-right box has the command + the
   // setup-skill prompt) — this list is the live checklist both of you watch
@@ -1016,7 +1032,7 @@ function SetupGuide({ snap, self, run, byId, navigate }) {
       state: wired ? 'loads into every session'
         : !cfg?.scriptAvailable ? 'applies automatically with the install'
         : ruleDoc?.exists ? 'installed rule is outdated' : 'not applied yet',
-      action: !wired && cfg?.scriptAvailable ? <A onClick={() => run && run('install-browser-config', { confirm: true })}>Apply the rule</A> : null,
+      action: !wired && cfg?.scriptAvailable ? <A busy={byId?.['install-browser-config']?.status === 'running'} onClick={() => run && run('install-browser-config', { confirm: true })}>Apply the rule</A> : null,
     },
     {
       n: '3', title: 'Give agents logins', optional: true, done: bwDone, locked: !(horse && harnessOk),
@@ -1264,7 +1280,7 @@ function VerbList({ items }) {
     </div>
   )
 }
-function Docs({ snap, self, navigate, actions }) {
+function Docs({ snap, self, navigate, actions, openDoc }) {
   const { byId, run } = actions || {}
   const horseInstalled = !!snap?.tools?.['horse-browser']?.installed
   const cfg = (snap?.versions || {})['browser-config']
@@ -1273,14 +1289,24 @@ function Docs({ snap, self, navigate, actions }) {
   const manualDoc = snap?.agentDocs?.docs?.find((d) => d.kind === 'manual')
   const verbFiles = (snap?.agentDocs?.docs || []).filter((d) => d.kind === 'verb-file')
   const docFor = (base) => verbFiles.find((d) => d.path.endsWith(base))
-  const [reader, setReader] = useState(null)
+  /* Which doc is open lives in the URL (docs/<id>), not in state: Back closes the reader
+     instead of leaving the whole Docs page, a doc is linkable, and a reload reopens it.
+     `kind` is the id for the singletons; verb files need their filename too, since they
+     all share kind 'verb-file'. Resolves to null until the snapshot arrives, so a
+     deep-linked doc simply opens as soon as its metadata is there. */
+  const docId = (d) => !d ? '' : d.kind === 'verb-file' ? 'verb/' + d.path.split('/').pop() : d.kind
+  const reader = !openDoc ? null
+    : openDoc.startsWith('verb/') ? (verbFiles.find((d) => d.path.endsWith(openDoc.slice(5))) || null)
+    : ((snap?.agentDocs?.docs || []).find((d) => d.kind === openDoc) || null)
+  const openReader = (d) => navigate('docs/' + docId(d))
+  const closeReader = () => navigate('docs')
   const [showSys, setShowSys] = useState(false)
   // the verbs come LIVE from the harness — `horse-browser verbs --json` (name, tier, docstring).
   // Nothing about them is hardcoded here; VERB_DESC is only a fallback for verbs with no docstring.
   const [verbRows, setVerbRows] = useState(null)
   useEffect(() => { fetch(self.api + '/verbs').then((r) => r.json()).then((v) => setVerbRows(Array.isArray(v) ? v : [])).catch(() => setVerbRows([])) }, [])
   const readBtn = (doc) => doc?.exists
-    ? <button onClick={() => setReader(doc)} className="cl-mono shrink-0 rounded-full border border-white/15 px-2.5 py-0.5 text-[10.5px] font-semibold text-zinc-300 transition hover:border-white/30 hover:text-white">Read</button>
+    ? <button onClick={() => openReader(doc)} className="cl-mono shrink-0 rounded-full border border-white/15 px-2.5 py-0.5 text-[10.5px] font-semibold text-zinc-300 transition hover:border-white/30 hover:text-white">Read</button>
     : null
   const stat = (doc) => doc?.exists ? `${doc.lines} lines · ${(doc.bytes / 1000).toFixed(1)} kB` : null
   // group the introspected verbs by source file into the three tiers, ordered core → plugins → local
@@ -1339,8 +1365,9 @@ function Docs({ snap, self, navigate, actions }) {
                 action={<>
                   {cfg?.scriptAvailable && (!ruleDoc?.exists || cfg.upToDate === false) && (
                     <button onClick={() => run && run('install-browser-config', { confirm: true })}
-                      className="cl-mono shrink-0 rounded-full px-2.5 py-0.5 text-[10.5px] font-semibold text-white shadow-sm transition hover:brightness-110" style={{ background: ACCENT }}>
-                      {ruleDoc?.exists ? 'Reapply' : 'Apply'}
+                      disabled={byId?.['install-browser-config']?.status === 'running'}
+                      className="cl-mono shrink-0 rounded-full px-2.5 py-0.5 text-[10.5px] font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60" style={{ background: ACCENT }}>
+                      {byId?.['install-browser-config']?.status === 'running' ? 'applying…' : ruleDoc?.exists ? 'Reapply' : 'Apply'}
                     </button>
                   )}
                   {readBtn(ruleDoc)}
@@ -1410,7 +1437,7 @@ function Docs({ snap, self, navigate, actions }) {
           <p className="mt-8 text-[12.5px] leading-relaxed text-zinc-500">Only one layer is authored by <span className="text-amber-300">you</span> and shipped by nobody — your <code className="cl-mono text-[11.5px] text-zinc-400">agent_helpers.py</code> verbs and <code className="cl-mono text-[11.5px] text-zinc-400">domain-skills/</code> notes. Everything else regenerates from its origin; those don’t.</p>
         </Reveal>
       </div>
-      {reader && <DocModal key={reader.path} doc={reader} self={self} onClose={() => setReader(null)} />}
+      {reader && <DocModal key={reader.path} doc={reader} self={self} onClose={closeReader} />}
       <div className="mx-auto mt-12 max-w-4xl"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
     </>
   )
@@ -1681,9 +1708,16 @@ export default function Module() {
   useChromeStyles()
   const { path, navigate } = window.__atelier.useRoute()
   const self = window.__atelier.self(import.meta.url)
-  const { snap } = useSnapshot(self)
+  const { snap, snapErr, refresh } = useSnapshot(self)
   const actions = useActions(self)
   const img = (nm) => self.api + '/images/' + nm
+
+  /* Nothing on this page can be trusted if the snapshot never arrived, and every panel's
+     placeholder reads "reading your machine…" — which looked like a slow load forever. Say it
+     once, at the top, and keep whatever last-good data we have visible underneath. */
+  const banner = snapErr ? (
+    <div className="mb-5"><LoadError what="this machine's state" detail={snapErr} onRetry={refresh} /></div>
+  ) : null
 
   let body
   if (path === 'story') body = <Story navigate={navigate} img={img} />
@@ -1692,7 +1726,7 @@ export default function Module() {
   else if (path === 'accounts') body = <Accounts self={self} navigate={navigate} />
   else if (path === 'activity') body = <Activity self={self} navigate={navigate} />
   else if (path === 'runtime') body = <Runtime snap={snap} self={self} navigate={navigate} actions={actions} />
-  else if (path === 'docs') body = <Docs snap={snap} self={self} navigate={navigate} actions={actions} />
+  else if (path === 'docs' || path.startsWith('docs/')) body = <Docs snap={snap} self={self} navigate={navigate} actions={actions} openDoc={path.startsWith('docs/') ? path.slice(5) : ''} />
   else if (path === 'site-skills') body = <SiteSkills snap={snap} self={self} navigate={navigate} />
   else if (path === 'setup' || path.startsWith('setup/')) body = <SetupWizard snap={snap} self={self} navigate={navigate} focus={path.split('/')[1] || null} />
   else body = <Board snap={snap} self={self} navigate={navigate} actions={actions} img={img} />
@@ -1702,6 +1736,7 @@ export default function Module() {
     // margins eat the card's own padding (p-6, lg:p-10 — see catalyst's
     // sidebar-layout) and equal padding puts the content back where it was.
     <div className="cl-root relative -m-6 min-h-[calc(100vh-4rem)] bg-zinc-950 p-6 text-zinc-200 lg:-m-10 lg:min-h-[calc(100dvh-1rem)] lg:p-10">
+      {banner}
       {body}
     </div>
   )

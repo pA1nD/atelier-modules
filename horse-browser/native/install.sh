@@ -42,7 +42,21 @@ cat > "$PLIST" <<EOF
 EOF
 
 launchctl bootout "gui/$UID_N/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$UID_N" "$PLIST"
+# bootout is ASYNC: the old job can still be tearing down when bootstrap runs, and launchd
+# then fails the load with "Bootstrap failed: 5: Input/output error". Under `set -e` that
+# aborted the script with the daemon NOT running and the version stamp unwritten — i.e. a
+# rebuild could leave the machine worse off than before. Retry until the teardown lands.
+n=0
+until launchctl bootstrap "gui/$UID_N" "$PLIST" 2>/dev/null; do
+  n=$((n + 1))
+  if [ "$n" -ge 10 ]; then
+    echo "hb-broker: launchctl bootstrap failed 10x — last error:" >&2
+    launchctl bootstrap "gui/$UID_N" "$PLIST" || true   # run once more, unmuted, to show why
+    echo "hb-broker: daemon is NOT running. Retry: sh $0" >&2
+    exit 1
+  fi
+  sleep 1
+done
 launchctl enable "gui/$UID_N/$LABEL" 2>/dev/null || true
 
 # Stamp the module version this binary was built from, so the module's mount-heal

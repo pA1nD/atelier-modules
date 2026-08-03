@@ -60,9 +60,27 @@ let KEYCHAIN_ACCOUNT = "bw-session"
 let CDP_HOST = "127.0.0.1"
 let CDP_PORT = ProcessInfo.processInfo.environment["HB_CDP_PORT"] ?? "9223"
 
-// How often the daemon refreshes an already-warm vault from the Bitwarden server (seconds).
-// Warm-only — see Vault.periodicSyncIfWarm. 0 disables it; default 10 min.
+// How often the daemon CHECKS whether an automatic server pull is due (seconds). Warm-only —
+// see Vault.periodicSyncIfWarm. 0 disables the timer; default 10 min. This is the tick rate, not
+// the sync rate: whether a tick actually pulls is decided by SYNC_MIN_INTERVAL below. Ticking
+// finer than that window is deliberate — it's how the daemon notices the window has elapsed
+// shortly after it does, instead of up to a full window late.
 let SYNC_INTERVAL: TimeInterval = max(0, Double(ProcessInfo.processInfo.environment["HB_SYNC_INTERVAL_SEC"] ?? "") ?? 600)
+
+// Minimum gap between AUTOMATIC server pulls (seconds). Both automatic triggers — the periodic
+// warm tick and the dashboard's mount refresh — go through this one gate, so "automatic sync"
+// means at most once per this window no matter how often either fires, or how many tabs are
+// open. The operator's explicit Sync now / Rescan bypass it entirely.
+let SYNC_MIN_INTERVAL: TimeInterval = max(0, Double(ProcessInfo.processInfo.environment["HB_SYNC_MIN_INTERVAL_SEC"] ?? "") ?? 3600)
+
+// What a caller wants from a server pull. `ifStale` defers to SYNC_MIN_INTERVAL; `always` is the
+// operator asking directly and ignores it.
+enum PullMode { case never, always, ifStale }
+// Holds the auto-sync timer for the process lifetime. Must be global — see serve().
+var syncTimer: DispatchSourceTimer? = nil
+// Log every auto-sync tick, including the cold no-ops. Off by default (a 10-min heartbeat
+// would just pad the log); HB_SYNC_VERBOSE=1 makes the timer observable when diagnosing it.
+let VERBOSE_SYNC = ProcessInfo.processInfo.environment["HB_SYNC_VERBOSE"] == "1"
 
 func ensureAppSupport() {
   try? FileManager.default.createDirectory(at: APP_SUPPORT, withIntermediateDirectories: true)
@@ -109,6 +127,13 @@ let BW = resolveBw()
 // a slow `bw` here never blocks a cached status/groups/policy read on another thread.
 let bwSerial = DispatchQueue(label: "hb-broker.bw.serial")
 
+// Wall-clock cap on any single bw invocation. bw is a Node CLI doing network I/O; a stalled
+// connection otherwise hangs `waitUntilExit()` forever WHILE HOLDING bwSerial, wedging every
+// credential path (fill, list, status) until someone restarts the daemon by hand — and
+// KeepAlive can't help, because the process is alive. 90s sits under the agent plugin's 120s
+// socket timeout, so a stuck call surfaces as a clean broker error instead of a client hang.
+let BW_TIMEOUT: TimeInterval = max(5, Double(ProcessInfo.processInfo.environment["HB_BW_TIMEOUT_SEC"] ?? "") ?? 90)
+
 @discardableResult
 func runBw(_ args: [String], session: String? = nil, extraEnv: [String: String] = [:]) -> (code: Int32, out: String, err: String) {
   guard let bw = BW else { return (127, "", "bitwarden cli (bw) not found on PATH") }
@@ -128,6 +153,10 @@ func runBw(_ args: [String], session: String? = nil, extraEnv: [String: String] 
     p.environment = env
     let out = Pipe(), err = Pipe(); p.standardOutput = out; p.standardError = err
     p.standardInput = FileHandle.nullDevice   // never wait on stdin (bw prompts → EOF, not hang)
+    // Signalled by Process when the child exits — lets the wait below carry a deadline.
+    // Must be installed before run().
+    let exited = DispatchSemaphore(value: 0)
+    p.terminationHandler = { _ in exited.signal() }
     do { try p.run() } catch { return (127, "", "\(error)") }
     // Drain BOTH pipes concurrently while bw runs. Reading only after waitUntilExit()
     // deadlocks on large output: `bw list items` (a 500-item vault) overflows the 64 KB
@@ -138,7 +167,15 @@ func runBw(_ args: [String], session: String? = nil, extraEnv: [String: String] 
     let grp = DispatchGroup(), q = DispatchQueue(label: "hb-broker.bw.pipe", attributes: .concurrent)
     grp.enter(); q.async { oData = outFH.readDataToEndOfFile(); grp.leave() }
     grp.enter(); q.async { eData = errFH.readDataToEndOfFile(); grp.leave() }
-    p.waitUntilExit()
+    // Bounded wait. On a timeout, SIGTERM then SIGKILL: killing the child closes both pipes,
+    // so the drain tasks hit EOF and grp.wait() below returns instead of hanging with them.
+    if exited.wait(timeout: .now() + BW_TIMEOUT) == .timedOut {
+      log("bw \(args.first ?? "?") exceeded \(Int(BW_TIMEOUT))s — killing it")
+      p.terminate()
+      if exited.wait(timeout: .now() + 5) == .timedOut { kill(p.processIdentifier, SIGKILL) }
+      grp.wait()
+      return (124, "", "bw \(args.first ?? "") timed out after \(Int(BW_TIMEOUT))s")
+    }
     grp.wait()
     let o = String(data: oData, encoding: .utf8) ?? ""
     let e = String(data: eData, encoding: .utf8) ?? ""
@@ -487,6 +524,10 @@ final class Vault {
   // an unusable vault and an empty allow-list both read as "no items" — the caller
   // then renders "nothing granted" over what is really a broken session.
   private var lastError: String? = nil
+  /* When the last SUCCESSFUL server pull happened — the shared clock every automatic trigger
+     checks. In memory on purpose: a daemon restart (a module update, a reboot) allows one extra
+     pull, which is the right side to err on, and it avoids another file to keep consistent. */
+  private var lastPullAt: Date? = nil
   private let queue = DispatchQueue(label: "hb-broker.vault")
   private let unlockQ = DispatchQueue(label: "hb-broker.vault.unlock")   // serializes cold unlocks
 
@@ -656,11 +697,22 @@ final class Vault {
     for f in jsonArray(["list", "folders"], session: s) {
       if let id = f["id"] as? String, !id.isEmpty { flds[id] = (f["name"] as? String) ?? id }
     }
+    // A failed `bw list` yields [] (jsonArray swallows the error), so treat an empty item list as
+    // "the read failed", never as "the vault is empty": keep the last good index and caches and
+    // report it. Without this a transient blip (network, appdata lock, revoked token) silently
+    // empties the grant picker and the in-memory index — and since the periodic auto-sync runs
+    // unattended, nobody would be watching when it happened.
+    if items.isEmpty {
+      setError("`bw list items` came back empty — treating it as a failed read and keeping the last known vault. Retrying on the next sync.")
+      log("vault: index rebuild returned 0 items — keeping previous index + caches")
+      return
+    }
     queue.sync { index = items; indexAt = Date(); collectionNames = cols; folderNames = flds }
     // Persist the NON-SECRET group metadata (names + counts only) so the picker can
     // render later without unlocking. No item names, usernames, URIs, or passwords.
+    // Guarded like the reachable cache below: never overwrite a good picker with nothing.
     let meta = groupMetadata(items: items, cols: cols, flds: flds)
-    if let d = try? JSONSerialization.data(withJSONObject: meta) {
+    if !meta.isEmpty, let d = try? JSONSerialization.data(withJSONObject: meta) {
       try? d.write(to: GROUPS_CACHE_PATH)
       try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: GROUPS_CACHE_PATH.path)
     }
@@ -760,6 +812,13 @@ final class Vault {
   func reachableResult() -> [String: Any] {
     // Grants exist on disk but their signature doesn't verify, so tierFor() refuses every one.
     // Take priority over any cache written when integrity was still OK.
+    // Unverifi-ABLE (Keychain hasn't answered yet) is not unverifi-ED (tampered): the first
+    // clears itself, and telling the operator to re-grant would be wrong.
+    Policy.shared.reloadIfKeyWasUnavailable()
+    if Policy.shared.keyUnavailable {
+      return ["ok": false, "items": [], "reason": "key-unavailable",
+              "error": "Waiting for macOS to allow the broker to read its Keychain item — approve the prompt (\"Always Allow\") and this refreshes on its own. Your grants are untouched."]
+    }
     if !Policy.shared.integrityOk {
       let n = Policy.shared.unverifiedCount
       return ["ok": false, "items": [],
@@ -780,17 +839,37 @@ final class Vault {
   // `bw sync` — so without this an item added on another device is invisible here no
   // matter how often the index is rebuilt. Runs only on the user-initiated "pull latest"
   // paths (Sync now / rescan), never the passive warm-on-fill path (keeps fills fast).
-  private func syncVault(session s: String) {
+  @discardableResult
+  private func syncVault(session s: String) -> String? {
     let r = runBw(["sync"], session: s)
-    if r.code != 0 { log("vault: bw sync failed — \(r.err.trimmingCharacters(in: .whitespacesAndNewlines))") }
+    // Stamp only on SUCCESS: a failed pull must not start the clock, or one network blip would
+    // silence automatic syncing for a whole window.
+    guard r.code != 0 else { queue.sync { lastPullAt = Date() }; return nil }
+    let why = r.err.trimmingCharacters(in: .whitespacesAndNewlines)
+    log("vault: bw sync failed — \(why)")
+    return why.isEmpty ? "bw sync failed (exit \(r.code))" : why
   }
 
   // Explicit sync: warm the vault (unlock → keychain, silent) + pull from the server +
   // rebuild the index, which rewrites the reachable cache, then return the fresh reachable
   // result. This is the "Sync now" action.
+  // Reports what actually happened, not just ok:true. buildIndex stamps syncedAt = now even when
+  // the server pull failed, so without didSync/syncError the UI would show "synced just now" over
+  // a stale local bw snapshot — the same lie as a sync that silently does nothing.
+  // didSync:false ⇒ nothing was pulled and syncedAt is the OLD one.
   func syncReachable() -> [String: Any] {
-    if let s = ensureSession() { syncVault(session: s); buildIndex(session: s) }
-    return reachableResult()
+    guard let s = ensureSession() else {
+      var r = reachableResult()
+      r["didSync"] = false
+      r["syncError"] = vaultError ?? "the vault couldn't be opened, so nothing was pulled from Bitwarden"
+      return r
+    }
+    let err = syncVault(session: s)
+    buildIndex(session: s)
+    var r = reachableResult()
+    r["didSync"] = (err == nil)
+    if let e = err { r["syncError"] = "couldn't reach Bitwarden — showing the last synced data (\(e))" }
+    return r
   }
 
   // Background refresh for an ALREADY-warm vault: pull the server's latest into the local
@@ -799,7 +878,16 @@ final class Vault {
   // the cold-by-default posture is unchanged), and a silent no-op when cold. The session key is
   // already in memory, so this is a pure network round-trip.
   func periodicSyncIfWarm() {
-    guard isWarm, let s = queue.sync(execute: { session }) else { return }
+    guard isWarm, let s = queue.sync(execute: { session }) else {
+      if VERBOSE_SYNC { log("auto-sync: tick (vault cold — skipped)") }
+      return
+    }
+    // The tick is frequent so the window is noticed promptly; the gate decides whether to pull.
+    guard pullIsDue() else {
+      if VERBOSE_SYNC { log("auto-sync: tick (pulled within the last \(Int(SYNC_MIN_INTERVAL))s — skipped)") }
+      return
+    }
+    log("auto-sync: refreshing warm vault")
     syncVault(session: s)
     buildIndex(session: s)
   }
@@ -812,9 +900,24 @@ final class Vault {
     return arr.map { var g = $0; g["tier"] = Policy.shared.tierOfGroup((g["key"] as? String) ?? "")?.rawValue ?? ""; return g }
   }
 
-  // Rescan the live vault (unlock → Touch ID), pull from the server, refresh the cache, return it.
-  func rescanGroups() -> [[String: Any]] {
-    if let s = ensureSession() { syncVault(session: s); buildIndex(session: s) }
+  // Is an automatic server pull due? The one gate every automatic trigger shares, so the pull
+  // rate is a property of the vault rather than of how often any given trigger fires.
+  func pullIsDue() -> Bool {
+    guard SYNC_MIN_INTERVAL > 0 else { return true }
+    guard let last = queue.sync(execute: { lastPullAt }) else { return true }   // never pulled
+    return Date().timeIntervalSince(last) >= SYNC_MIN_INTERVAL
+  }
+  var lastPullEpoch: Double? { queue.sync { lastPullAt?.timeIntervalSince1970 } }
+
+  // Rescan the live vault (unlock → Touch ID), refresh the cache, return it.
+  // A `bw sync` here is a network round-trip: right when the operator explicitly asks for the
+  // latest collections (.always), and worth doing opportunistically when the dashboard is opened
+  // (.ifStale) — but not on every mount, which is what the shared gate prevents.
+  func rescanGroups(pull: PullMode) -> [[String: Any]] {
+    if let s = ensureSession() {
+      if pull == .always || (pull == .ifStale && pullIsDue()) { syncVault(session: s) }
+      buildIndex(session: s)
+    }
     return cachedGroups() ?? []
   }
 
@@ -886,13 +989,25 @@ final class Policy {
   // A COUNT only — never names: this file failed its integrity check, so nothing in
   // it is trustworthy enough to render as text.
   private(set) var unverifiedCount = 0
+  // The MAC key itself couldn't be READ (Keychain approval pending, keychain locked) — so the
+  // policy is unverifiABLE, which is NOT the same as unverifiED. Both fail closed (no grants in
+  // force), but only real tampering should tell the operator their policy was tampered with and
+  // send them off to re-grant. This case resolves itself the moment the Keychain answers.
+  private(set) var keyUnavailable = false
   // Grants actually in force. 0 with integrityOk ⇒ a fresh install that simply hasn't
   // granted anything — a different situation from "your grants were refused".
   var grantedCount: Int { queue.sync { groups.values.filter { $0.tier != .never }.count } }
 
+  // Re-run the verification if the last attempt couldn't read the key. Cheap in the healthy
+  // case (no Keychain read at all), and lets a daemon that started behind an unanswered
+  // approval prompt recover on its own instead of needing a manual restart.
+  func reloadIfKeyWasUnavailable() {
+    if queue.sync(execute: { keyUnavailable }) { load() }
+  }
+
   init() { load() }
 
-  private func parseGroups(_ j: [String: Any]) -> [String: GroupRule] {
+  func parseGroups(_ j: [String: Any]) -> [String: GroupRule] {
     var m: [String: GroupRule] = [:]
     if let gs = j["groups"] as? [String: [String: Any]] {
       for (k, v) in gs {
@@ -916,11 +1031,21 @@ final class Policy {
     // Non-empty grants MUST carry a valid MAC signed by our cdhash-bound key. A tampered
     // policy.json (or a changed key/binary) fails here → fail CLOSED: grant nothing.
     let sig = (try? String(contentsOf: POLICY_SIG_PATH, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let key = policyMacKey(), let sig = sig, sig == hmacHex(d, key) {
-      queue.sync { groups = g; integrityOk = true; unverifiedCount = 0 }
+    // No key ⇒ we cannot judge the file at all. Fail CLOSED (no grants in force) but do NOT
+    // cache a tampering verdict: a rebuild re-prompts the Keychain ACL, and the daemon that
+    // launchd restarts starts up BEHIND that unanswered prompt. Conflating the two made every
+    // routine update announce "policy.json tampered" and send the operator to re-grant
+    // everything, when the grants were fine and only a restart was needed.
+    guard let key = policyMacKey() else {
+      log("policy: MAC key unreadable (Keychain approval pending?) — grants held inactive until it verifies; NOT treating this as tampering")
+      queue.sync { groups = [:]; integrityOk = true; keyUnavailable = true; unverifiedCount = 0 }
+      return
+    }
+    if let sig = sig, sig == hmacHex(d, key) {
+      queue.sync { groups = g; integrityOk = true; keyUnavailable = false; unverifiedCount = 0 }
     } else {
       log("policy: INTEGRITY CHECK FAILED — refusing ALL grants (policy.json tampered, or key/binary changed → reconnect)")
-      queue.sync { groups = [:]; integrityOk = false; unverifiedCount = g.count }
+      queue.sync { groups = [:]; integrityOk = false; keyUnavailable = false; unverifiedCount = g.count }
     }
   }
 
@@ -1152,9 +1277,15 @@ func handle(_ req: [String: Any]) -> [String: Any] {
   switch op {
 
   case "status":
+    // Self-heal the "started behind an unanswered Keychain prompt" case: no-op unless the last
+    // verification couldn't read the key, so the operator's approval takes effect on the next
+    // poll instead of requiring a daemon restart.
+    Policy.shared.reloadIfKeyWasUnavailable()
     return ["ok": true, "vault": vault.status(), "socket": SOCK_PATH,
             "policyOk": Policy.shared.integrityOk,
             "policyUnverified": Policy.shared.unverifiedCount,
+            "policyKeyUnavailable": Policy.shared.keyUnavailable,
+            "lastPullAt": vault.lastPullEpoch ?? 0,     // last successful server pull, for honest freshness
             "granted": Policy.shared.grantedCount]
 
   // Sent by `hb-broker setup` after it stores a fresh token. Not gated: it only
@@ -1183,7 +1314,15 @@ func handle(_ req: [String: Any]) -> [String: Any] {
 
   case "refresh":
     // Rescan the live vault (unlock → Touch ID) and refresh the cache.
-    return ["ok": true, "groups": vault.rescanGroups()]
+    //   pull:"always" (or true) — the operator's Rescan: pull now, ignore the gate.
+    //   pull:"if-stale"         — the dashboard opening: pull only if one is due.
+    //   absent                  — index the local snapshot only.
+    let mode: PullMode = {
+      if let s = req["pull"] as? String { return s == "always" ? .always : s == "if-stale" ? .ifStale : .never }
+      return (req["pull"] as? Bool) == true ? .always : .never
+    }()
+    let groups = vault.rescanGroups(pull: mode)
+    return ["ok": true, "groups": groups, "lastPullAt": vault.lastPullEpoch ?? 0]
 
   case "sync":
     // Explicit "Sync now": warm + rebuild, rewriting the reachable cache, then return the fresh
@@ -1201,6 +1340,14 @@ func handle(_ req: [String: Any]) -> [String: Any] {
 
   case "policy_set":
     guard let proposed = req["policy"] as? [String: Any] else { return deny("bad-request", "missing policy") }
+    // `apply` is a FULL REPLACE, so an empty map means "revoke every grant". That is a real
+    // thing to want, but it must be asked for on purpose: an empty/malformed HTTP body also
+    // decodes to {}, which would silently wipe every grant — and because revoking is a
+    // downgrade, the Touch ID gate below wouldn't fire and the caller would still get ok:true.
+    // Require the caller to say so explicitly.
+    if Policy.shared.parseGroups(proposed).isEmpty && !(proposed["allowEmpty"] as? Bool ?? false) {
+      return deny("bad-request", "refusing a policy with no grants: a full replace with an empty set revokes everything. Pass allowEmpty:true if that is genuinely intended.")
+    }
     if Policy.shared.isUpgrade(proposed) {
       guard touchID(reason: "Approve a more permissive hb-broker credential policy") else {
         audit(["event": "policy_set", "result": "denied", "session": session, "detail": "upgrade rejected"])
@@ -1294,9 +1441,13 @@ func handleCredOp(_ op: String, _ req: [String: Any], session: String) -> [Strin
   var cdp: CDP? = nil
   var sessionId: String? = nil
   var tabHost = ""
+  var typeTarget = ""       // hoisted: the re-check before typing needs it (see the TOCTOU close below)
+  var boundHosts: [String] = []
   if isType {
     guard let target = req["target"] as? String, !target.isEmpty else { return logDeny("bad-request", "type op needs a CDP target id") }
+    typeTarget = target
     let hosts = hostsOf(item.uris)
+    boundHosts = hosts
     if hosts.isEmpty { return logDeny("origin-unbound", "'\(item.name)' has no login URI to bind an origin to; refusing to type") }
     guard let c = CDP() else { return logDeny("no-browser", "cannot reach the browser on \(CDP_HOST):\(CDP_PORT)") }
     cdp = c
@@ -1329,6 +1480,22 @@ func handleCredOp(_ op: String, _ req: [String: Any], session: String) -> [Strin
 
   var result: [String: Any] = ["ok": true, "cred": cred, "item": item.name, "tier": tier.rawValue]
   if isType {
+    // TOCTOU close. The origin was checked before the Touch ID prompt (human-paced) and before
+    // `bw get totp` (a subprocess that can queue behind other bw work) — a wide window in which
+    // the caller can Page.navigate the very tab we're attached to. Our CDP session follows the
+    // tab across navigation, so without re-reading the URL here the keystrokes could land on a
+    // page the operator never approved: the agent asks to sign in to the real site, waits for
+    // approval, then moves the tab. Re-verify against the item's own URIs at the last possible
+    // moment and refuse if anything moved. This narrows the window to the gap between this
+    // check and the dispatch below; it cannot be closed entirely from outside the browser.
+    guard let nowURL = cdp!.targetURL(typeTarget), let nowHost = hostOf(nowURL) else {
+      cdp!.detach(sessionId!)
+      return logDeny("no-target", "the tab stopped being readable before typing — refusing")
+    }
+    if nowHost != tabHost || !hostMatches(nowHost, bound: boundHosts) {
+      cdp!.detach(sessionId!)
+      return logDeny("origin-changed", "the tab moved to \(nowHost) after the origin check (approved for \(tabHost)) — refusing to type")
+    }
     cdp!.typeText(value, sessionId: sessionId!)
     cdp!.detach(sessionId!)
     result["typed"] = value.count
@@ -1368,8 +1535,36 @@ func notifyDaemon(_ req: [String: Any]) {
 
 // ─────────────────────────── unix socket server ──────────────────────────────
 
+// Is a live daemon already listening? A successful connect() means yes; ECONNREFUSED means the
+// socket file is stale (crash leftover) and is ours to replace.
+func alreadyServing() -> Bool {
+  let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+  guard fd >= 0 else { return false }
+  defer { close(fd) }
+  var addr = sockaddr_un()
+  addr.sun_family = sa_family_t(AF_UNIX)
+  SOCK_PATH.withCString { p in withUnsafeMutablePointer(to: &addr.sun_path) {
+    $0.withMemoryRebound(to: CChar.self, capacity: 104) { strlcpy($0, p, 104) } } }
+  let len = socklen_t(MemoryLayout<sockaddr_un>.size)
+  return withUnsafePointer(to: &addr) {
+    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, len) == 0 }
+  }
+}
+
 func serve() {
   ensureAppSupport()
+  // Refuse to start if another daemon is already serving. The unlink below would otherwise
+  // silently steal the socket path from the running instance: the old process keeps its
+  // listening fd on the now-unlinked inode, so every client gets ECONNREFUSED and the broker
+  // looks dead while its process is still alive — an outage with no error anywhere. A stray
+  // `hb-broker serve` (an operator debugging, an agent following the setup skill) is enough.
+  // Probing with a real connect also distinguishes a LIVE peer from a stale socket file left
+  // by a crash, which must be unlinked rather than deferred to.
+  if alreadyServing() {
+    log("another hb-broker is already serving on \(SOCK_PATH) — refusing to start a second one")
+    FileHandle.standardError.write("hb-broker: already running (socket: \(SOCK_PATH)). Not starting a second instance.\n".data(using: .utf8)!)
+    exit(0)
+  }
   unlink(SOCK_PATH)
   let fd = socket(AF_UNIX, SOCK_STREAM, 0)
   guard fd >= 0 else { log("socket() failed"); exit(1) }
@@ -1399,8 +1594,12 @@ func serve() {
   // Keep an already-warm vault fresh: a warm-only periodic `bw sync` so a login added on
   // another device becomes reachable without a manual "Sync now". Never unlocks a cold/idle
   // vault (posture unchanged) — it's a no-op until an agent has warmed it, then runs silently
-  // off the request path. HB_SYNC_INTERVAL_SEC=0 disables it. Retained for the process lifetime.
-  var syncTimer: DispatchSourceTimer? = nil
+  // off the request path. HB_SYNC_INTERVAL_SEC=0 disables it.
+  //
+  // The source MUST be held by `syncTimer` (a global). Held in a local instead, ARC releases it
+  // right after its last use — even with the loop below still running — the source deallocates,
+  // and the timer silently never fires while the startup log still claims it armed. Verified:
+  // local-held = 0 ticks, global-held = every tick.
   if SYNC_INTERVAL > 0 {
     let t = DispatchSource.makeTimerSource(queue: DispatchQueue.global())
     t.schedule(deadline: .now() + SYNC_INTERVAL, repeating: SYNC_INTERVAL, leeway: .seconds(30))
@@ -1409,7 +1608,6 @@ func serve() {
     syncTimer = t
     log("warm-vault auto-sync every \(Int(SYNC_INTERVAL))s")
   }
-  _ = syncTimer   // keep alive
 
   // Handle each connection on a background thread so a slow op (a fill, a rescan,
   // a Touch ID prompt) never blocks cached status/groups/policy reads. bw access is

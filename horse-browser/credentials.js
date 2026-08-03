@@ -601,12 +601,29 @@ export function mountCredentials(router, ctx) {
   brokerSlot.statusTimer = setInterval(() => { brokerStatusTick().catch(() => {}) }, 10000)
   router.get('/broker/policy', async (_req, res) => res.json(await brokerCall({ op: 'policy_get' })))
   router.post('/broker/policy', async (req, res) => {
-    let body = {}; try { body = await req.json() } catch {}
+    // policy_set is a FULL REPLACE. Defaulting a broken body to {} meant an empty or malformed
+    // POST silently revoked every grant — and since revoking is a downgrade, no Touch ID fired
+    // and the caller still got ok:true. Fail the request instead of guessing.
+    let body
+    try { body = await req.json() } catch (e) {
+      return res.json({ ok: false, reason: 'bad-request', error: `could not read the policy body (${e && e.message || e}) — refusing, because an unreadable body would revoke every grant` }, 400)
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res.json({ ok: false, reason: 'bad-request', error: 'policy body must be an object of group rules' }, 400)
+    }
     res.json(await brokerCall({ op: 'policy_set', policy: body, session: 'ui' }, 60000))  // may Touch-ID
     brokerStatusNow()
   })
   router.get('/broker/groups', async (_req, res) => res.json(await brokerCall({ op: 'groups', session: 'ui' }, 60000)))
-  router.post('/broker/refresh', async (_req, res) => { res.json(await brokerCall({ op: 'refresh', session: 'ui' }, 60000)); brokerStatusNow() })
+  // `pull` = whether to also pull from the Bitwarden server: true/'always' for the operator's
+  // explicit Rescan, 'if-stale' for the board's mount warm (the daemon then gates it to at most
+  // once an hour across all triggers), absent to only index the local snapshot.
+  router.post('/broker/refresh', async (req, res) => {
+    let pull = false
+    try { const b = await req.json(); pull = b && b.pull } catch {}
+    res.json(await brokerCall({ op: 'refresh', pull, session: 'ui' }, 60000))
+    brokerStatusNow()
+  })
   router.get('/broker/reachable', async (_req, res) => res.json(await brokerCall({ op: 'list', session: 'ui' }, 60000)))
   router.post('/broker/sync', async (_req, res) => { res.json(await brokerCall({ op: 'sync', session: 'ui' }, 60000)); brokerStatusNow() })
   router.get('/broker/audit', async (req, res) => {

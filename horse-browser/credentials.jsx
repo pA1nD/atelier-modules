@@ -263,13 +263,25 @@ function ConnectBox({ status, setupCmd, cli }) {
 function DisconnectLink({ name, endpoint, warn, onDone, lock }) {
   const [step, setStep] = useState(0)   // 0 idle · 1 confirm · 2 busy
   const [manual, setManual] = useState(null)
+  const [failed, setFailed] = useState(null)
   const go = async () => {
-    setStep(2)
-    try { const r = await postJSON(endpoint); if (r.ok) { setManual(r.manual || 'Disconnected.'); onDone && onDone() } else setStep(0) }
-    catch { setStep(0) }
+    setStep(2); setFailed(null)
+    /* Dropping back to step 0 on failure made a FAILED disconnect look exactly like a
+       cancelled one — the vault stays connected either way and the user is told nothing.
+       Surface it. */
+    try {
+      const r = await postJSON(endpoint)
+      if (r && r.ok) { setManual(r.manual || 'Disconnected.'); onDone && onDone() }
+      else { setFailed((r && (r.error || r.reason)) || 'the broker refused the disconnect'); setStep(0) }
+    } catch (e) { setFailed(String((e && e.message) || e)); setStep(0) }
   }
   if (manual) return <div className="flex items-start gap-2 text-[12px] text-zinc-400"><span className="mt-1"><StatusDot color="amber" /></span><div><Strong>Disconnected.</Strong> {manual}</div></div>
-  if (step === 0) return <button type="button" onClick={() => setStep(1)} title={lock ? 'Prompts for macOS approval to confirm' : undefined} className="text-[12px] text-zinc-400 underline underline-offset-2 transition hover:text-rose-400">{lock ? '🔒 ' : ''}disconnect {name}</button>
+  if (step === 0) return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <button type="button" onClick={() => { setFailed(null); setStep(1) }} title={lock ? 'Prompts for macOS approval to confirm' : undefined} className="text-[12px] text-zinc-400 underline underline-offset-2 transition hover:text-rose-400">{lock ? '🔒 ' : ''}disconnect {name}</button>
+      {failed ? <span className="text-[12px] text-amber-300">— didn't disconnect; still connected. <span className="text-amber-300/70">{failed}</span></span> : null}
+    </span>
+  )
   return (
     <span className="inline-flex items-center gap-2 text-[12px] text-zinc-400">
       <span className="max-w-xs">{warn}</span>
@@ -284,7 +296,7 @@ const GROUP_TIERS = [
   { v: 'ask', label: 'ask', hint: 'macOS approval every use' },
   { v: 'auto', label: 'auto', hint: 'always, no prompt — unattended' },
 ]
-function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, saving, saveMsg, disabled }) {
+function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, groupsErr, onSave, saving, saveMsg, disabled }) {
   const [tiers, setTiers] = useState({})
   const meta = useRef({})
   useEffect(() => {
@@ -309,7 +321,12 @@ function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, savi
   const save = () => {
     const out = {}
     for (const [k, v] of Object.entries(tiers)) { if (v === 'off' || !v) continue; const m = meta.current[k] || {}; out[k] = { kind: m.kind || (k.startsWith('fld:') ? 'folder' : 'collection'), name: m.name || k, tier: v } }
-    onSave({ version: 2, groups: out })
+    /* Everything off is a legitimate "revoke all" — but the broker rejects an empty policy
+       unless it's explicit, because an empty or malformed body decodes to the same thing and
+       would otherwise wipe every grant silently. Turning them off here IS deliberate. */
+    const payload = { version: 2, groups: out }
+    if (Object.keys(out).length === 0) payload.allowEmpty = true
+    onSave(payload)
   }
   return (
     <div className="space-y-4">
@@ -340,7 +357,11 @@ function GroupPicker({ policy, groups, onLoadGroups, loadingGroups, onSave, savi
             </tr>
           </thead>
           <tbody>
-            {keys.length === 0 && <tr><td colSpan={3} className="px-3 py-6 text-center text-[13px] text-zinc-500">{disabled ? 'Build the broker daemon first — collections load through it.' : groups ? 'No collections or folders in this Bitwarden account.' : 'Load your Bitwarden collections to grant access.'}</td></tr>}
+            {keys.length === 0 && <tr><td colSpan={3} className="px-3 py-6 text-center text-[13px]">{
+              groupsErr
+                ? <span className="text-amber-300">Couldn't read your collections — <span className="text-amber-300/70">{groupsErr}</span></span>
+                : <span className="text-zinc-500">{disabled ? 'Build the broker daemon first — collections load through it.' : groups ? 'No collections or folders in this Bitwarden account.' : 'Load your Bitwarden collections to grant access.'}</span>
+            }</td></tr>}
             {keys.map((k) => {
               const m = meta.current[k] || {}; const t = tiers[k] || 'off'
               return (
@@ -399,10 +420,29 @@ function ReachableSection({ navigate }) {
   const [slow, setSlow] = useState(false)
   const [q, setQ] = useState('')
   const [syncing, setSyncing] = useState(false)
-  const apply = (r) => { if (r && r.ok) setSt({ items: r.items || [], syncedAt: r.syncedAt || 0, neverSynced: !!r.neverSynced }); else setSt({ error: r?.error || 'unavailable', reason: r?.reason }) }
+  /* syncWarn: the daemon stamps syncedAt even when the server pull failed, so "synced 2m ago"
+     alone would present a stale local snapshot as fresh. didSync/syncError say what really
+     happened; the plain /broker/reachable GET omits both, so this stays null there. */
+  const apply = (r) => {
+    if (r && r.ok) setSt({
+      items: r.items || [], syncedAt: r.syncedAt || 0, neverSynced: !!r.neverSynced,
+      syncWarn: r.syncError || (r.didSync === false ? "the vault couldn't be opened, so nothing was pulled from Bitwarden" : null),
+    })
+    else setSt({ error: r?.error || 'unavailable', reason: r?.reason })
+  }
   // Sync now = warm the vault + rebuild the cache (the ONLY action that unlocks). The list itself
   // reads the cache, so it's instant and never triggers an unlock.
-  const sync = () => { setSyncing(true); postJSON('/broker/sync').then(apply).catch((e) => setSt({ error: String((e && e.message) || e) })).finally(() => setSyncing(false)) }
+  /* A sync can outlive the page (it may unlock the vault, so tens of seconds) — mounted keeps
+     its late resolution from setting state on an unmounted component. */
+  const mounted = useRef(true)
+  useEffect(() => () => { mounted.current = false }, [])
+  const sync = () => {
+    setSyncing(true)
+    postJSON('/broker/sync')
+      .then((r) => { if (mounted.current) apply(r) })
+      .catch((e) => { if (mounted.current) setSt({ error: String((e && e.message) || e) }) })
+      .finally(() => { if (mounted.current) setSyncing(false) })
+  }
   useEffect(() => {
     let alive = true
     const t = setTimeout(() => { if (alive) setSlow(true) }, 400)
@@ -410,7 +450,18 @@ function ReachableSection({ navigate }) {
       .catch((e) => { if (alive) setSt({ error: String((e && e.message) || e) }) }).finally(() => { if (alive) clearTimeout(t) })
     return () => { alive = false; clearTimeout(t) }
   }, [])
-  if (st.error && st.reason === 'no-broker') return null
+  /* Rendering nothing was fine when this only ever appeared inside the board (where the broker
+     card already explains itself), but it is ALSO the whole body of the /accounts page — so
+     deep-linking there with the daemon down gave a page containing two back-links and nothing
+     else. Say what is wrong instead. */
+  if (st.error && st.reason === 'no-broker') return (
+    <div className="space-y-3"><Label>Reachable accounts</Label>
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-5 text-[13px] text-zinc-400">
+        <div className="font-medium text-zinc-300">The credential broker isn't running.</div>
+        <div className="mt-1.5">There is nothing to list until it is. {navigate ? <>Set it up from the <button type="button" onClick={() => navigate('')} className="underline underline-offset-2 hover:text-zinc-200">board</button>.</> : null}</div>
+      </div>
+    </div>
+  )
   if (st.error) return (
     <div className="space-y-3"><Label>Reachable accounts</Label>
       <div className="rounded-xl border border-amber-400/30 bg-amber-400/[0.06] px-4 py-5 text-[13px] text-amber-300"><div className="font-medium">No accounts reachable — this is not an empty list.</div><div className="mt-1.5 text-amber-300/80">{st.error}</div></div>
@@ -425,6 +476,11 @@ function ReachableSection({ navigate }) {
     <div className="space-y-3">
       <Label>Reachable accounts</Label>
       <p className="max-w-2xl text-[13.5px] leading-relaxed text-zinc-400">The logins inside your granted collections — what an agent can enumerate right now. This list is <Strong>non-secret</Strong>: any agent reads it via <Code>list_login_profiles</Code>. The password never appears here or anywhere — it is only ever <Code>type_secret</Code>-typed by the broker, gated by tier, origin, and a macOS approval.</p>
+      {st.syncWarn ? (
+        <div className="rounded-xl border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2.5 text-[12.5px] text-amber-300">
+          <Strong>That sync didn't reach Bitwarden.</Strong> <span className="text-amber-300/80">Showing the last data that did — a login added on another device may be missing. {st.syncWarn}</span>
+        </div>
+      ) : null}
       {items.length === 0 ? (
         st.neverSynced ? (
           <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-[13px] text-zinc-500">Not synced yet — <button type="button" onClick={sync} disabled={syncing} className="underline underline-offset-2 hover:text-zinc-300 disabled:opacity-50">{syncing ? 'syncing…' : 'Sync now'}</button> to read your granted collections.</div>
@@ -504,7 +560,11 @@ function AgentIntegration({ navigate, brokerReady }) {
   const [note, setNote] = useState('')
   const loadHelper = useCallback(() => fetch(API + '/state').then((r) => r.json()).then((c) => setHelper(c.helper)).catch(() => {}), [])
   const loadCfg = useCallback(() => fetch(API + '/hints-config').then((r) => r.json()).then(setCfg).catch(() => {}), [])
-  useEffect(() => { loadHelper(); loadCfg() }, [loadHelper, loadCfg])
+  /* Re-read when the broker comes up. Both loaders are useCallback([]), so mounting once meant
+     these three rows kept showing their pre-install snapshot — and the toggle stayed bound to a
+     stale cfg — until a full page reload. brokerReady flips false→true over the WS exactly when
+     the daemon finishes installing, which is the moment the rows are supposed to turn green. */
+  useEffect(() => { loadHelper(); loadCfg() }, [loadHelper, loadCfg, brokerReady])
   const mf = helper?.moduleFile
   const managed = !!mf?.exists
   const hState = !helper ? null : (managed && mf.current ? 'ok' : managed ? 'outdated' : 'missing')
@@ -624,10 +684,17 @@ function QuickSearch({ navigate }) {
   const [q, setQ] = useState('')
   const [items, setItems] = useState(null)
   const [loading, setLoading] = useState(false)
+  /* err: without this a failed load left items null, and the "no matches" branch below then
+     told the user the account does not exist — a false negative on the exact question this
+     widget answers. "Couldn't load" and "not in your granted collections" must not look alike. */
+  const [err, setErr] = useState(null)
   const load = () => {
     if (items || loading) return
-    setLoading(true)
-    fetch(API + '/broker/reachable').then((r) => r.json()).then((r) => { if (r && r.ok) setItems(r.items || []) }).catch(() => {}).finally(() => setLoading(false))
+    setLoading(true); setErr(null)
+    fetch(API + '/broker/reachable').then((r) => r.json())
+      .then((r) => { if (r && r.ok) setItems(r.items || []); else setErr((r && (r.error || r.reason)) || 'the account list could not be read') })
+      .catch((e) => setErr(String((e && e.message) || e)))
+      .finally(() => setLoading(false))
   }
   const matches = q && items ? items.filter((i) => ((i.item || '') + ' ' + (i.username || '') + ' ' + (i.hosts || []).join(' ')).toLowerCase().includes(q.toLowerCase())) : []
   return (
@@ -642,6 +709,8 @@ function QuickSearch({ navigate }) {
         <div className="mt-1.5 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl">
           {loading && !items ? (
             <div className="px-3 py-3 text-[12px] text-zinc-500">searching…</div>
+          ) : err ? (
+            <div className="px-3 py-3 text-[12px] text-amber-300">Couldn't load the account list — this is not a "no match". <span className="text-amber-300/70">{err}</span></div>
           ) : matches.length === 0 ? (
             <div className="px-3 py-3 text-[12px] text-zinc-500">no accounts match “{q}”.</div>
           ) : (
@@ -736,19 +805,43 @@ export function AuthPanel({ self, navigate }) {
   const [grp, setGrp] = useState(null)
   useEffect(() => {
     let busy = false
-    const load = async () => { if (busy) return; busy = true; try { const r = await fetch(API + '/broker/status', { signal: AbortSignal.timeout(10000) }); if (r.ok) setBw(await r.json()) } catch { setBw((b) => b || { installed: false }) } finally { busy = false } }
+    let alive = true
+    /* gen counts applied updates. The daemon PUSHES broker-status the moment anything changes,
+       so a frame that lands while a poll is in flight is always fresher than that poll's
+       response — without this the slow response wins by arriving last and rolls the connection
+       ladder backwards (e.g. back to "cold" just after the vault warmed). */
+    let gen = 0
+    const apply = (v) => { gen += 1; setBw(v) }
+    const load = async () => {
+      if (busy) return
+      busy = true
+      const startedAt = gen
+      try {
+        const r = await fetch(API + '/broker/status', { signal: AbortSignal.timeout(10000) })
+        if (!alive || !r.ok) return
+        const j = await r.json()
+        if (!alive || gen !== startedAt) return   // something newer already landed — keep it
+        apply(j)
+      } catch { if (alive) setBw((b) => b || { installed: false }) } finally { busy = false }
+    }
     load()
-    // Opening the board warms/slides the vault so hints are ready for agents: a silent slide when
-    // already warm (2h idle), a Touch-ID unlock when it has gone cold. Once per mount, not on the poll.
-    postJSON('/broker/refresh').then(() => load()).catch(() => {})
-    const unsub = self.subscribe((f) => { if (f.type === 'broker-status' && f.status) setBw(f.status) })
+    /* Opening the board warms/slides the vault so hints are ready for agents: a silent slide when
+       already warm, a Touch-ID unlock when it has gone cold. Once per mount, not on the poll.
+       'if-stale' also pulls from Bitwarden — but the daemon gates that to at most once an hour
+       across every trigger and every tab, so opening the board ten times pulls once. */
+    postJSON('/broker/refresh', { pull: 'if-stale' }).then(() => load()).catch(() => {})
+    const unsub = self.subscribe((f) => { if (f.type === 'broker-status' && f.status && alive) apply(f.status) })
     const t = setInterval(() => { if (!document.hidden) load() }, 45000)
-    return () => { unsub && unsub(); clearInterval(t) }
+    return () => { alive = false; unsub && unsub(); clearInterval(t) }
   }, [])
   useEffect(() => {
     let alive = true
     const load = () => fetch(API + '/broker/groups').then((r) => r.json()).then((r) => {
-      if (!alive || !r || !r.ok || r.needsScan) return
+      if (!alive || !r) return
+      /* needsScan = the vault has never been scanned, so these numbers are unknowable rather
+         than slow. Bailing left the headline tallies showing "…" forever with no way out —
+         and the Rescan that fixes it lives on another page. Say so, and offer the trip. */
+      if (!r.ok || r.needsScan) { setGrp({ needsScan: !!r.needsScan }); return }
       const granted = (r.groups || []).filter((g) => g.tier && g.tier !== 'off' && g.tier !== 'never')
       setGrp({ accounts: granted.reduce((n, g) => n + (g.count || 0), 0), collections: granted.length,
         auto: granted.filter((g) => g.tier === 'auto').reduce((n, g) => n + (g.count || 0), 0),
@@ -821,6 +914,12 @@ export function AuthPanel({ self, navigate }) {
             {ready && !nothingGranted ? (
               <>
                 {/* one compact box instead of four wide tiles */}
+                {grp && grp.needsScan ? (
+                  <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-white/10 bg-white/[0.02] px-4 py-2.5 text-[12px] text-zinc-400">
+                    <span>Collections haven't been scanned yet, so the counts are unknown —</span>
+                    <button type="button" onClick={() => navigate('credentials')} className="font-medium text-zinc-200 underline underline-offset-2 hover:text-white">scan them in Settings</button>
+                  </div>
+                ) : (
                 <div className="inline-flex flex-wrap items-baseline gap-x-2.5 gap-y-1 rounded-lg border border-white/10 bg-white/[0.02] px-4 py-2.5">
                   <span className="text-[20px] font-semibold tabular-nums text-emerald-300">{grp ? grp.accounts : '…'}</span>
                   <span className="text-[12px] text-zinc-400">accounts reachable</span>
@@ -831,6 +930,7 @@ export function AuthPanel({ self, navigate }) {
                   <span className="text-zinc-600">·</span>
                   <span className="text-[12px] text-zinc-400"><span className="font-semibold tabular-nums text-amber-300">{grp ? grp.ask : '…'}</span> ask</span>
                 </div>
+                )}
                 <div className="mt-3"><QuickSearch navigate={navigate} /></div>
               </>
             ) : (
@@ -867,8 +967,42 @@ export function Settings({ self, navigate }) {
     return () => { unsub(); clearInterval(t) }
   }, [loadStatus])
 
-  const loadGroups = async () => { setLoadingGroups(true); try { const r = await postJSON('/broker/refresh'); if (r.ok) setGroups(r.groups || []) } finally { setLoadingGroups(false) } }
-  const save = async (body) => { setSaving(true); setSaveMsg(null); try { const r = await postJSON('/broker/policy', body); if (r.ok) { setPolicy(r.policy); setSaveMsg({ ok: true, text: 'saved' }) } else setSaveMsg({ ok: false, text: r.error || r.reason || 'failed' }) } finally { setSaving(false); setTimeout(() => setSaveMsg(null), 4000) } }
+  /* No catch/else meant a locked vault, a cancelled Touch ID, or a broker that's down all
+     ended with the spinner stopping and the table still saying "Load your collections" —
+     no reason given. A thrown fetch also escaped as an unhandled rejection, since the
+     onClick never awaits this. */
+  const [groupsErr, setGroupsErr] = useState(null)
+  const loadGroups = async () => {
+    setLoadingGroups(true); setGroupsErr(null)
+    try {
+      const r = await postJSON('/broker/refresh', { pull: true })   // explicit Rescan: get the server's latest
+      if (r && r.ok) setGroups(r.groups || [])
+      else setGroupsErr((r && (r.error || r.reason)) || 'the vault could not be read')
+    } catch (e) { setGroupsErr(String((e && e.message) || e)) }
+    finally { setLoadingGroups(false) }
+  }
+  /* The save may sit on a Touch ID prompt, and the "saved" flash clears on a 4s timer — both can
+     land after the page is gone, so both are guarded and the timer is cancelled on unmount. */
+  const mounted = useRef(true)
+  const msgTimer = useRef(null)
+  useEffect(() => () => { mounted.current = false; if (msgTimer.current) clearTimeout(msgTimer.current) }, [])
+  const save = async (body) => {
+    setSaving(true); setSaveMsg(null)
+    try {
+      const r = await postJSON('/broker/policy', body)
+      if (!mounted.current) return
+      if (r && r.ok) { setPolicy(r.policy); setSaveMsg({ ok: true, text: 'saved' }) }
+      else setSaveMsg({ ok: false, text: (r && (r.error || r.reason)) || 'failed' })
+    } catch (e) {
+      if (mounted.current) setSaveMsg({ ok: false, text: String((e && e.message) || e) })
+    } finally {
+      if (mounted.current) {
+        setSaving(false)
+        if (msgTimer.current) clearTimeout(msgTimer.current)
+        msgTimer.current = setTimeout(() => { if (mounted.current) setSaveMsg(null) }, 4000)
+      }
+    }
+  }
 
   const v = status?.vault
   const badge = !status ? null
@@ -905,7 +1039,7 @@ export function Settings({ self, navigate }) {
         </div>
       )}
 
-      <div className="mt-8"><GroupPicker policy={policy} groups={groups} onLoadGroups={loadGroups} loadingGroups={loadingGroups} onSave={save} saving={saving} saveMsg={saveMsg} disabled={!!status && !status.installed} /></div>
+      <div className="mt-8"><GroupPicker policy={policy} groups={groups} onLoadGroups={loadGroups} loadingGroups={loadingGroups} groupsErr={groupsErr} onSave={save} saving={saving} saveMsg={saveMsg} disabled={!!status && !status.installed} /></div>
 
       <div className="mt-14"><button onClick={() => navigate('')} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-zinc-300 transition hover:text-white">← back to the board</button></div>
     </>
@@ -933,8 +1067,25 @@ export function Activity({ self, navigate }) {
   const [audit, setAudit] = useState(null)
   useEffect(() => {
     let alive = true
-    fetch(API + '/broker/audit?n=200').then((r) => r.json()).then((r) => { if (alive && r && r.ok) setAudit((r.events || []).slice().reverse()) }).catch(() => {})
-    const unsub = self.subscribe((f) => { if (f.type === 'broker-audit' && f.event && alive) setAudit((a) => [f.event, ...(a || [])].slice(0, 300)) })
+    /* The initial GET REPLACES the list, so a live event that arrived while it was in flight was
+       dropped — the one case where the log silently loses a credential access. Keep those and
+       merge, de-duped: the pushed frame and the file line are the same record, so key on the
+       fields that identify it (Swift dicts are unordered, so JSON text can't be the key). */
+    let pending = []
+    let loaded = false
+    const keyOf = (e) => [e.ts, e.event, e.cred, e.session, e.result, e.host].join('|')
+    fetch(API + '/broker/audit?n=200').then((r) => r.json()).then((r) => {
+      if (!alive || !r || !r.ok) return
+      const base = (r.events || []).slice().reverse()
+      const seen = new Set(base.map(keyOf))
+      setAudit([...pending.filter((e) => !seen.has(keyOf(e))), ...base].slice(0, 300))
+      loaded = true; pending = []
+    }).catch(() => {})
+    const unsub = self.subscribe((f) => {
+      if (f.type !== 'broker-audit' || !f.event || !alive) return
+      if (!loaded) pending = [f.event, ...pending]
+      setAudit((a) => [f.event, ...(a || [])].slice(0, 300))
+    })
     return () => { alive = false; unsub && unsub() }
   }, [])
   return (
