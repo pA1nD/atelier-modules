@@ -943,7 +943,10 @@ final class Vault {
       return r
     }
     let err = syncVault(session: s)
-    buildIndex(session: s)
+    // Same rule as rescanGroups: only a SUCCESSFUL pull can have changed the snapshot, so a
+    // failed one (offline, revoked session) has nothing new to index — and syncError already
+    // tells the caller. Still build if we somehow have no index.
+    if err == nil || queue.sync(execute: { index.isEmpty }) { buildIndex(session: s) }
     var r = reachableResult()
     r["didSync"] = (err == nil)
     if let e = err { r["syncError"] = "couldn't reach Bitwarden — showing the last synced data (\(e))" }
@@ -966,8 +969,8 @@ final class Vault {
       return
     }
     log("auto-sync: refreshing warm vault")
-    syncVault(session: s)
-    buildIndex(session: s)
+    let err = syncVault(session: s)
+    if err == nil { buildIndex(session: s) }   // a failed pull changed nothing to index
   }
 
   // The picker WITHOUT unlocking: read the cached (non-secret) group metadata and
@@ -993,8 +996,16 @@ final class Vault {
   // (.ifStale) — but not on every mount, which is what the shared gate prevents.
   func rescanGroups(pull: PullMode) -> [[String: Any]] {
     if let s = ensureSession() {
-      if pull == .always || (pull == .ifStale && pullIsDue()) { syncVault(session: s) }
-      buildIndex(session: s)
+      var pulled = false
+      if pull == .always || (pull == .ifStale && pullIsDue()) { pulled = (syncVault(session: s) == nil) }
+      /* Rebuild only when the result can actually DIFFER. The local bw snapshot changes only via
+         `bw sync` — bw rewrites data.json on plain reads too, but that's its own bookkeeping, not
+         the item set — so re-running the ~8s three-call rebuild against an unchanged snapshot is
+         guaranteed to produce identical output. This ran unconditionally, which is what made
+         merely opening the board cost ~8s of serialized bw work (and ~16s on a cold vault, since
+         ensureSession above had just built the index itself). Freshness is the sync policy's job,
+         not this call's. */
+      if pulled || queue.sync(execute: { index.isEmpty }) { buildIndex(session: s) }
     }
     return cachedGroups() ?? []
   }
