@@ -49,17 +49,35 @@ const run = (cmd, args, opts = {}) =>
 export function brokerCall(req, timeoutMs = 20000) {
   return new Promise((resolve) => {
     const sock = net.connect(SOCK)
-    let buf = ''
+    /* Accumulate BUFFERS and decode once, after splitting on the newline. `buf += d` stringifies
+       each chunk on its own, so any multi-byte character straddling a chunk boundary became
+       U+FFFD — and the result still parsed as JSON, so it was silent corruption: an item named
+       "Bäcker" reached an agent as "B??cker", which the broker then rejects as unknown. The
+       Python client in this same module already does it this way. */
+    const chunks = []
+    let len = 0
     let settled = false
-    const done = (obj) => { if (settled) return; settled = true; try { sock.destroy() } catch {} ; resolve(obj) }
+    const done = (obj) => { if (settled) return; settled = true; clearTimeout(t); try { sock.destroy() } catch {} ; resolve(obj) }
     const t = setTimeout(() => done({ ok: false, error: 'broker timeout', reason: 'timeout' }), timeoutMs)
     sock.on('connect', () => sock.write(JSON.stringify(req) + '\n'))
     sock.on('data', (d) => {
-      buf += d
-      const nl = buf.indexOf('\n')
-      if (nl >= 0) { clearTimeout(t); try { done(JSON.parse(buf.slice(0, nl))) } catch { done({ ok: false, error: 'bad broker response' }) } }
+      chunks.push(d); len += d.length
+      const all = Buffer.concat(chunks, len)
+      const nl = all.indexOf(0x0a)
+      if (nl >= 0) {
+        try { done(JSON.parse(all.slice(0, nl).toString('utf8'))) } catch { done({ ok: false, error: 'bad broker response' }) }
+      } else if (len > (8 << 20)) {
+        done({ ok: false, error: 'broker response exceeded 8 MB without a newline' })
+      }
     })
-    sock.on('error', (e) => { clearTimeout(t); done({ ok: false, error: `broker not reachable (${e.code})`, reason: 'no-broker' }) })
+    /* A daemon that dies or closes WITHOUT sending a newline used to leave this promise pending
+       until the (up to 60s) timeout, holding the HTTP request open the whole time. A browser only
+       gets ~6 sockets per origin and the credentials pages fire several of these at once, so a
+       wedged daemon stalled page loads for every OTHER module in the instance too. Settle now. */
+    const closed = () => done({ ok: false, error: 'the broker closed the connection without answering', reason: 'no-broker' })
+    sock.on('end', closed)
+    sock.on('close', closed)
+    sock.on('error', (e) => done({ ok: false, error: `broker not reachable (${e.code})`, reason: 'no-broker' }))
   })
 }
 
@@ -75,6 +93,17 @@ export const INSTALL = path.join(HERE, 'native', 'install.sh')
 
 export async function ensureDaemon(ctx) {
   if (!fs.existsSync(BIN)) return   // never bootstrap a first install — see native/install.sh
+  /* One heal at a time, per process. This runs on every mount, and a mount happens on every hot
+     reload — so while a Swift compile was in flight (up to the 180s exec cap), editing any module
+     file started ANOTHER one writing the same output binary and re-bootstrapping launchd
+     underneath it. The slot survives hot reload, which is exactly the span that needs covering. */
+  const slot = ctx.module(ctx.id)
+  if (slot.healInFlight) return
+  slot.healInFlight = true
+  try { await ensureDaemonInner(ctx) } finally { slot.healInFlight = false }
+}
+
+async function ensureDaemonInner(ctx) {
   // A healthy daemon of the CURRENT version is left alone — re-running install.sh
   // bounces the daemon (drops vault warmth, re-prompts Keychain), so we only do it
   // when it's actually needed: the daemon isn't answering, OR the shipped module

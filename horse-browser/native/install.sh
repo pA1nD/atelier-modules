@@ -36,8 +36,12 @@ cat > "$PLIST" <<EOF
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Interactive</string>
-  <key>StandardOutPath</key><string>$APP/broker.log</string>
-  <key>StandardErrorPath</key><string>$APP/broker.log</string>
+  <!-- NOT broker.log: the daemon writes and rotates that itself. Pointing launchd's stderr at
+       the same path put every line in it twice (the daemon logged to stderr AND to the file),
+       and launchd's long-lived fd would keep writing to the old inode after a rotation. This
+       file catches what the daemon does NOT log: crashes, runtime stack traces. -->
+  <key>StandardOutPath</key><string>$APP/broker.err.log</string>
+  <key>StandardErrorPath</key><string>$APP/broker.err.log</string>
 </dict></plist>
 EOF
 

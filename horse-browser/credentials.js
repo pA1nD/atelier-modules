@@ -151,6 +151,9 @@ get_secret = hb_get_secret = _gone
 // the harness auto-loads (precedence: core < plugins < the agent's own agent_helpers.py — last wins).
 // No stub is appended to agent_helpers.py anymore; on install we migrate any user off the old models.
 const PLUGIN_FILE = 'atelier_login.py'                  // the plugin's filename, under plugins/
+// Present in the code we generate, so a file at that path can be identified as ours before we
+// overwrite or delete it — the same guarantee the hook and the safety rule already had.
+const PLUGIN_MARKER = 'Managed by the atelier horse-browser module'
 const LEGACY_HELPERS_FILE = 'atelier_login_helpers.py'  // the pre-plugin sibling file — removed on migration
 // Old stub blocks once appended to agent_helpers.py (LastPass-era + hb-auth) — stripped on install.
 const LEGACY_STUB_RE = /\n*# >>> atelier-login:[^\n]*\n[\s\S]*?# <<< atelier-login <<<\n?/g
@@ -223,6 +226,13 @@ function installLoginHelpers(code) {
     const modPath = path.join(pdir, PLUGIN_FILE)
     let modSrc = null
     try { modSrc = fs.readFileSync(modPath, 'utf8') } catch {}
+    // Never clobber a file that isn't ours. The hook and the safety rule both check their marker
+    // before writing; this one didn't, so an operator's own atelier_login.py was overwritten (and,
+    // in removeAgentIntegration, deleted) without a word.
+    if (modSrc !== null && !modSrc.includes(PLUGIN_MARKER)) {
+      return { ok: false, foreign: true,
+        error: `${shortHome(modPath)} exists but wasn't written by this module (no marker) — refusing to overwrite it. Move it aside, then install again.` }
+    }
     let wroteFile = false
     if (modSrc !== code) { fs.writeFileSync(modPath, code); wroteFile = true }
     // migrate: strip any stub we ever appended to agent_helpers.py (leaving the operator's own
@@ -251,8 +261,16 @@ function aiCfgPath(ctx) { return path.join(ctx.dataDir, 'agent-integration.json'
 function integrationEnabled(ctx) {
   try { return JSON.parse(fs.readFileSync(aiCfgPath(ctx), 'utf8')).enabled !== false } catch { return true }
 }
+// Returns the write error, or null on success. Swallowing it meant the route answered ok while
+// the flag on disk still said the opposite — and since integrationEnabled() defaults to true when
+// the file is unreadable, the next /state read would resurrect all three files the caller had
+// just asked to remove.
 function setIntegrationEnabled(ctx, enabled) {
-  try { fs.mkdirSync(ctx.dataDir, { recursive: true }); fs.writeFileSync(aiCfgPath(ctx), JSON.stringify({ enabled: !!enabled }, null, 2)) } catch {}
+  try {
+    fs.mkdirSync(ctx.dataDir, { recursive: true })
+    fs.writeFileSync(aiCfgPath(ctx), JSON.stringify({ enabled: !!enabled }, null, 2))
+    return null
+  } catch (e) { return String((e && e.message) || e) }
 }
 function installAgentIntegration(code, apiBase) {
   const plugin = installLoginHelpers(code)
@@ -261,7 +279,8 @@ function installAgentIntegration(code, apiBase) {
   return { ok: plugin.ok !== false && hook.ok !== false && authRule.ok !== false, plugin, hook, authRule }
 }
 function removeAgentIntegration() {
-  try { const p = pluginFile(); if (p) fs.unlinkSync(p) } catch {}
+  // Marker-gated like the two below it — untoggling must not delete a file we didn't write.
+  try { const p = pluginFile(); if (p && fs.readFileSync(p, 'utf8').includes(PLUGIN_MARKER)) fs.unlinkSync(p) } catch {}
   try { if (fs.readFileSync(HOOK_PATH, 'utf8').includes(HOOK_MARKER)) fs.unlinkSync(HOOK_PATH) } catch {}
   try { if (fs.readFileSync(AUTH_RULE_PATH, 'utf8').includes(AUTH_RULE_MARKER)) fs.unlinkSync(AUTH_RULE_PATH) } catch {}
 }
@@ -538,9 +557,13 @@ export function mountCredentials(router, ctx) {
       // a false success.
       const r = installAgentIntegration(HELPER_CODE, LOOPBACK)
       if (!r.ok) return res.json({ ok: false, error: r.plugin?.error || r.hook?.error || r.authRule?.error || 'failed to write one or more agent-side files', ...r }, 500)
-      setIntegrationEnabled(ctx, true)
+      const err = setIntegrationEnabled(ctx, true)
+      if (err) return res.json({ ok: false, error: `the agent-side files were written, but the on/off flag could not be saved (${err}) — the toggle would not stick`, ...r }, 500)
     } else {
-      setIntegrationEnabled(ctx, false)
+      // Flag first: if it can't be written, stop rather than removing the files while the flag
+      // still reads "on" — the next /state read would put them straight back.
+      const err = setIntegrationEnabled(ctx, false)
+      if (err) return res.json({ ok: false, error: `could not save the off state (${err}) — leaving the integration in place rather than removing files that would be reinstalled` }, 500)
       removeAgentIntegration()
     }
     res.json({ ok: true, enabled, helper: helperState(HELPER_CODE), hook: hookStatus(LOOPBACK), authRule: authRuleStatus() })

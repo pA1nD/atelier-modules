@@ -598,9 +598,14 @@ function siteSkillsTree() {
 // The authoritative verb list, by tier — from `horse-browser verbs --json` (harness introspection,
 // not a hardcoded map). Powers the docs page's three tiers. ~1-2s (harness import), so it's cached
 // and fetched by its own route, off the snapshot poll.
-let _verbsCache = null
+/* The cache lives on the module SLOT, not in module scope: a hot reload builds a fresh module
+   graph, so a module-scope cache was empty again after every backend edit — and the next /verbs
+   then took the full cold path, holding one of the browser's ~6 sockets for up to 12s. The slot
+   survives reloads, so the cold path now happens about once per process instead of once per edit.
+   _verbsPending stays module-scope: an in-flight promise belongs to the graph that created it. */
 let _verbsPending = null
-async function refreshVerbs() {
+function verbsSlot(ctx) { const s = ctx.module(ctx.id); s.verbs ??= { at: 0, rows: null }; return s.verbs }
+async function refreshVerbs(ctx) {
   const hb = findOnPath('horse-browser')   // resolve the binary — bare `horse-browser` is empty under a managed-launcher PATH
   let rows = []
   if (hb) {
@@ -616,16 +621,18 @@ async function refreshVerbs() {
       }
     } catch {}
   }
-  _verbsCache = { at: Date.now(), rows }
+  const slot = verbsSlot(ctx)
+  slot.at = Date.now(); slot.rows = rows
   return rows
 }
 // Never hold the request: fresh cache → return it; stale → return stale NOW and
-// refresh in the background; only the very first cold call awaits (single-flight,
+// refresh in the background; only a genuinely cold call awaits (single-flight,
 // so concurrent page loads share one harness import instead of spawning many).
-async function harnessVerbs() {
-  if (_verbsCache && Date.now() - _verbsCache.at < 15000) return _verbsCache.rows
-  if (!_verbsPending) _verbsPending = refreshVerbs().finally(() => { _verbsPending = null })
-  if (_verbsCache) return _verbsCache.rows
+async function harnessVerbs(ctx) {
+  const slot = verbsSlot(ctx)
+  if (slot.rows && Date.now() - slot.at < 15000) return slot.rows
+  if (!_verbsPending) _verbsPending = refreshVerbs(ctx).finally(() => { _verbsPending = null })
+  if (slot.rows) return slot.rows
   return _verbsPending
 }
 
@@ -662,7 +669,14 @@ const ACTIONS = {
 }
 
 export default {
-  async mountRoutes(router, ctx) {
+  /* NOT async, deliberately. The shell does `const teardown = plug.mountRoutes(...)` and keeps it
+     only `if (typeof teardown === 'function'` — an async function returns a Promise, so the
+     teardown below was silently discarded on every mount: spawned installer children were never
+     SIGTERM'd on hot-reload or shutdown (they reparent to init), and on a real unmount the
+     watchers and timers outlived the module. Nothing here awaits at the top level, so the
+     keyword bought nothing. Keep it sync — see the slot-clearing at mount start, which exists
+     only because this used to be broken. */
+  mountRoutes(router, ctx) {
     const slot = ctx.module(ctx.id)
     slot.children ??= new Set()
     slot.verCache ??= {}
@@ -904,7 +918,7 @@ ${[want.browser && browserMd, want.credentials && credentialsMd, want.display &&
     })
 
     // every loaded verb by tier (core / plugin:<file> / local), introspected from the harness
-    router.get('/verbs', async (req, res) => res.json(await harnessVerbs()))
+    router.get('/verbs', async (req, res) => res.json(await harnessVerbs(ctx)))
 
     // per-host site skills (domain-skills/<host>/*.md) — the full tree with content, for the explorer page
     router.get('/site-skills', (req, res) => res.json(siteSkillsTree()))
@@ -1010,9 +1024,18 @@ ${[want.browser && browserMd, want.credentials && credentialsMd, want.display &&
       const type = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.gif': 'image/gif' }[ext] || 'application/octet-stream'
       // stream, don't buffer — the story-wall JPGs run to ~1.4 MB and a sync read
       // of that per request stalls the shared event loop
-      const s = fs.createReadStream(path.join(mediaDir(ctx), name))
-      s.on('error', () => { try { res.writeHead(404); res.end('not found') } catch { res.destroy() } })
-      s.once('open', () => { res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' }); s.pipe(res) })
+      /* basename() blocks traversal (and the router matches the RAW path, so %2f can't sneak a
+         separator in) — but basename('..') is '..', which resolves to the module directory. A
+         directory OPENS fine, so the old code sent a 200 and only hit EISDIR on the first read,
+         after the headers were already out: writeHead(404) then threw and the socket was killed.
+         Require a regular file before answering, so a bad name is a clean 404. */
+      const file = path.join(mediaDir(ctx), name)
+      fs.stat(file, (err, st) => {
+        if (err || !st.isFile()) { try { res.writeHead(404); res.end('not found') } catch { res.destroy() } ; return }
+        const s = fs.createReadStream(file)
+        s.on('error', () => { res.destroy() })   // mid-stream failure: headers are already sent
+        s.once('open', () => { res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' }); s.pipe(res) })
+      })
     })
 
     /* ── hands ── */

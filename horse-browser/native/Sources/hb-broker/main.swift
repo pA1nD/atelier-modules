@@ -91,13 +91,33 @@ func ensureAppSupport() {
 
 // ───────────────────────────────── logging ───────────────────────────────────
 
+// Under launchd, stderr IS broker.log (the plist redirects it), so writing to both put every line
+// in the file twice. Interactive runs still need to see output, so the stderr copy is kept only
+// when stderr is a terminal — which launchd's file redirect never is.
+let STDERR_IS_TTY = isatty(STDERR_FILENO) == 1
+let LOG_MAX_BYTES = 4 << 20     // rotate at 4 MB; one .1 generation is kept
+private let logSerial = DispatchQueue(label: "hb-broker.log")
+
 func log(_ msg: String) {
   let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(msg)\n"
-  FileHandle.standardError.write(line.data(using: .utf8)!)
-  if let fh = try? FileHandle(forWritingTo: LOG_PATH) {
-    fh.seekToEndOfFile(); fh.write(line.data(using: .utf8)!); try? fh.close()
-  } else {
-    try? line.data(using: .utf8)!.write(to: LOG_PATH)
+  guard let data = line.data(using: .utf8) else { return }
+  if STDERR_IS_TTY { FileHandle.standardError.write(data) }
+  // Serialized: seekToEndOfFile + write is not atomic, so concurrent handlers could interleave
+  // halves of two lines into the same offset.
+  logSerial.sync {
+    if let fh = try? FileHandle(forWritingTo: LOG_PATH) {
+      let end = fh.seekToEndOfFile()
+      fh.write(data)
+      try? fh.close()
+      // Nothing rotated this before, so it grew without limit for the life of the install.
+      if end + UInt64(data.count) > UInt64(LOG_MAX_BYTES) {
+        let old = LOG_PATH.appendingPathExtension("1")
+        try? FileManager.default.removeItem(at: old)
+        try? FileManager.default.moveItem(at: LOG_PATH, to: old)
+      }
+    } else {
+      try? data.write(to: LOG_PATH)
+    }
   }
 }
 
@@ -127,6 +147,23 @@ let BW = resolveBw()
 // a slow `bw` here never blocks a cached status/groups/policy read on another thread.
 let bwSerial = DispatchQueue(label: "hb-broker.bw.serial")
 
+// bwSerial only orders calls WITHIN this process. `hb-broker setup` / `status` / `doctor` run bw
+// in a SEPARATE process against the same BITWARDENCLI_APPDATA_DIR, so the serving daemon (whose
+// hourly sync can fire at any moment) could write data.json while setup's `bw login` was writing
+// it — exactly the corruption bwSerial exists to prevent, just across a boundary it can't see.
+// An advisory flock on a sidecar file closes that: every bw invocation in every hb-broker process
+// takes it, so they interleave instead of overlapping.
+let BW_LOCK_PATH = APP_SUPPORT.appendingPathComponent("bw.lock").path
+func withBwFileLock<T>(_ body: () -> T) -> T {
+  let fd = open(BW_LOCK_PATH, O_CREAT | O_RDWR, 0o600)
+  guard fd >= 0 else { return body() }        // can't lock (no dir yet?) — proceed rather than fail
+  defer { flock(fd, LOCK_UN); close(fd) }
+  // Blocking: bw calls are already serialized and time-capped, so waiting is correct here —
+  // a spin or a skip would either burn CPU or silently drop the operation.
+  flock(fd, LOCK_EX)
+  return body()
+}
+
 // Wall-clock cap on any single bw invocation. bw is a Node CLI doing network I/O; a stalled
 // connection otherwise hangs `waitUntilExit()` forever WHILE HOLDING bwSerial, wedging every
 // credential path (fill, list, status) until someone restarts the daemon by hand — and
@@ -137,7 +174,7 @@ let BW_TIMEOUT: TimeInterval = max(5, Double(ProcessInfo.processInfo.environment
 @discardableResult
 func runBw(_ args: [String], session: String? = nil, extraEnv: [String: String] = [:]) -> (code: Int32, out: String, err: String) {
   guard let bw = BW else { return (127, "", "bitwarden cli (bw) not found on PATH") }
-  return bwSerial.sync {
+  return bwSerial.sync { withBwFileLock {
     let p = Process(); p.executableURL = URL(fileURLWithPath: bw); p.arguments = args
     var env = ProcessInfo.processInfo.environment
     if let s = session { env["BW_SESSION"] = s }
@@ -180,7 +217,7 @@ func runBw(_ args: [String], session: String? = nil, extraEnv: [String: String] 
     let o = String(data: oData, encoding: .utf8) ?? ""
     let e = String(data: eData, encoding: .utf8) ?? ""
     return (p.terminationStatus, o.trimmingCharacters(in: .whitespacesAndNewlines), e.trimmingCharacters(in: .whitespacesAndNewlines))
-  }
+  } }
 }
 
 // Like runBw, but INTERACTIVE — used only by `hb-broker setup` for a two-step login.
@@ -192,7 +229,9 @@ func runBw(_ args: [String], session: String? = nil, extraEnv: [String: String] 
 // daemon), so holding bwSerial here is fine.
 func runBwInteractive(_ args: [String], extraEnv: [String: String] = [:]) -> Int32 {
   guard let bw = BW else { return 127 }
-  return bwSerial.sync {
+  // Same cross-process lock as runBw: this is the LOGIN, the longest and most destructive bw call,
+  // and it runs while the serving daemon may fire its own sync against the same appdata dir.
+  return bwSerial.sync { withBwFileLock {
     let p = Process(); p.executableURL = URL(fileURLWithPath: bw); p.arguments = args
     var env = ProcessInfo.processInfo.environment
     for (k, v) in extraEnv { env[k] = v }
@@ -275,7 +314,7 @@ func runBwInteractive(_ args: [String], extraEnv: [String: String] = [:]) -> Int
     signal(SIGTTOU, SIG_DFL)
     out.fileHandleForReading.readabilityHandler = nil
     return p.terminationStatus
-  }
+  } }
 }
 
 // ─────────────────────────── Keychain + presence ─────────────────────────────
@@ -461,20 +500,39 @@ func keychainHasToken() -> Bool {
 // For `ask`-tier ops and policy upgrades on an ALREADY-warm session, where no
 // Keychain read happens, we still demand presence with an explicit evaluation.
 
+// Approval prompts are serialized here. Connections are handled concurrently, so two `ask`-tier
+// ops could previously raise two LAContexts at once — the operator gets stacked sheets and can't
+// tell which request they're approving, which is the wrong property for a consent gate.
+let laSerial = DispatchQueue(label: "hb-broker.la.serial")
+// How long an unanswered prompt may pin a worker thread. Without a bound, abandoned prompts
+// accumulate until libdispatch's pool is exhausted and the daemon answers nothing at all.
+let LA_TIMEOUT: TimeInterval = max(15, Double(ProcessInfo.processInfo.environment["HB_APPROVAL_TIMEOUT_SEC"] ?? "") ?? 120)
+
 func evaluateLA(_ policy: LAPolicy, _ reason: String) -> (ok: Bool, code: LAError.Code?) {
-  let ctx = LAContext()
-  var pre: NSError?
-  guard ctx.canEvaluatePolicy(policy, error: &pre) else {
-    return (false, (pre as? LAError)?.code)
+  laSerial.sync {
+    let ctx = LAContext()
+    var pre: NSError?
+    guard ctx.canEvaluatePolicy(policy, error: &pre) else {
+      return (false, (pre as? LAError)?.code)
+    }
+    let sem = DispatchSemaphore(value: 0)
+    var ok = false
+    var code: LAError.Code?
+    ctx.evaluatePolicy(policy, localizedReason: reason) { success, err in
+      ok = success; code = (err as? LAError)?.code; sem.signal()
+    }
+    // withExtendedLifetime: the callback holds no strong reference to ctx, and releasing an
+    // LAContext with an evaluation in flight cancels it — which surfaced as a spurious
+    // appCancel the caller then had to special-case.
+    return withExtendedLifetime(ctx) { () -> (Bool, LAError.Code?) in
+      if sem.wait(timeout: .now() + LA_TIMEOUT) == .timedOut {
+        ctx.invalidate()          // dismiss the sheet; fail CLOSED
+        log("approval prompt unanswered after \(Int(LA_TIMEOUT))s — denying")
+        return (false, .userCancel)
+      }
+      return (ok, code)
+    }
   }
-  let sem = DispatchSemaphore(value: 0)
-  var ok = false
-  var code: LAError.Code?
-  ctx.evaluatePolicy(policy, localizedReason: reason) { success, err in
-    ok = success; code = (err as? LAError)?.code; sem.signal()
-  }
-  sem.wait()
-  return (ok, code)
 }
 
 func touchID(reason: String) -> Bool {
@@ -795,6 +853,26 @@ final class Vault {
   // The set an agent may use: items whose collection/folder grants a tier other
   // than never. Never the full vault — items in no granted group don't appear.
   func reachableList() -> [[String: Any]] { reachableFrom(items()) }
+
+  // Re-price the reachable cache after a policy change. The cache stores each item's TIER, and it
+  // is served cache-first — so without this, `list_login_profiles` kept naming items (and their
+  // usernames and hosts) from a collection the operator had just revoked, until the next sync.
+  // Fills were still denied correctly, so this is inventory truth rather than a credential leak.
+  // Re-derives from the in-memory index when we have one (no bw call, no unlock); otherwise drops
+  // the cache, which under-reports rather than over-reports.
+  func repriceReachableCache() {
+    let known = queue.sync { index }
+    guard !known.isEmpty else {
+      try? FileManager.default.removeItem(at: REACHABLE_CACHE_PATH)
+      return
+    }
+    let reach: [String: Any] = ["syncedAt": queue.sync { indexAt }?.timeIntervalSince1970 ?? Date().timeIntervalSince1970,
+                                "items": reachableFrom(known)]
+    if let d = try? JSONSerialization.data(withJSONObject: reach) {
+      try? d.write(to: REACHABLE_CACHE_PATH)
+      try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: REACHABLE_CACHE_PATH.path)
+    }
+  }
 
   // The non-secret reachable cache as { syncedAt, items }, or nil if never synced.
   func readReachableCache() -> [String: Any]? {
@@ -1137,12 +1215,22 @@ func audit(_ event: [String: Any]) {
   }
 }
 
+// Reads only the TAIL. This is polled by the UI, and slurping the whole append-only audit file
+// every time meant the cost grew forever with the log — on a busy install that is megabytes read
+// (and decoded to a String) per poll, on the shared serial queue.
 func auditTail(_ n: Int) -> [[String: Any]] {
-  guard let s = try? String(contentsOf: AUDIT_PATH, encoding: .utf8) else { return [] }
-  let lines = s.split(separator: "\n").suffix(n)
-  return lines.compactMap { l in
-    (try? JSONSerialization.jsonObject(with: Data(l.utf8))) as? [String: Any]
-  }
+  guard let fh = try? FileHandle(forReadingFrom: AUDIT_PATH) else { return [] }
+  defer { try? fh.close() }
+  let size = fh.seekToEndOfFile()
+  // ~600 bytes/event is generous for these records; cap the window so it stays bounded.
+  let want = UInt64(min(max(n, 1), 5000)) * 600
+  let from = size > want ? size - want : 0
+  fh.seek(toFileOffset: from)
+  guard let data = try? fh.readToEnd(), !data.isEmpty else { return [] }
+  var lines = data.split(separator: 0x0a)
+  // A non-zero start almost certainly lands mid-line — drop that partial record.
+  if from > 0, !lines.isEmpty { lines.removeFirst() }
+  return lines.suffix(n).compactMap { (try? JSONSerialization.jsonObject(with: Data($0))) as? [String: Any] }
 }
 
 // ─────────────────────────────── CDP client ──────────────────────────────────
@@ -1356,6 +1444,7 @@ func handle(_ req: [String: Any]) -> [String: Any] {
     }
     let changes = Policy.shared.changes(proposed)
     Policy.shared.apply(proposed)
+    vault.repriceReachableCache()   // the cache carries tiers; a revoke must not stay listed
     var ev: [String: Any] = ["event": "policy_set", "result": "ok", "session": session]
     if !changes.isEmpty { ev["changes"] = changes }
     audit(ev)
@@ -1521,8 +1610,10 @@ func notifyDaemon(_ req: [String: Any]) {
   defer { close(fd) }
   var addr = sockaddr_un()
   addr.sun_family = sa_family_t(AF_UNIX)
+  // strlcpy, not strcpy: sun_path is a fixed 104 bytes and an over-long path would have
+  // written past it (a long $HOME is all it takes — the path is ~50 chars of fixed suffix).
   SOCK_PATH.withCString { p in withUnsafeMutablePointer(to: &addr.sun_path) {
-    $0.withMemoryRebound(to: CChar.self, capacity: 104) { strcpy($0, p) } } }
+    $0.withMemoryRebound(to: CChar.self, capacity: 104) { strlcpy($0, p, 104) } } }
   let len = socklen_t(MemoryLayout<sockaddr_un>.size)
   guard (withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, len) } }) == 0,
         var line = (try? JSONSerialization.data(withJSONObject: req)).map({ String(data: $0, encoding: .utf8) ?? "" })
@@ -1571,8 +1662,10 @@ func serve() {
 
   var addr = sockaddr_un()
   addr.sun_family = sa_family_t(AF_UNIX)
+  // strlcpy, not strcpy: sun_path is a fixed 104 bytes and an over-long path would have
+  // written past it (a long $HOME is all it takes — the path is ~50 chars of fixed suffix).
   SOCK_PATH.withCString { p in withUnsafeMutablePointer(to: &addr.sun_path) {
-    $0.withMemoryRebound(to: CChar.self, capacity: 104) { strcpy($0, p) } } }
+    $0.withMemoryRebound(to: CChar.self, capacity: 104) { strlcpy($0, p, 104) } } }
   let len = socklen_t(MemoryLayout<sockaddr_un>.size)
   let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) } }
   guard bound == 0 else { log("bind() failed on \(SOCK_PATH)"); exit(1) }
@@ -1616,7 +1709,24 @@ func serve() {
   let workers = DispatchQueue(label: "hb-broker.conn", attributes: .concurrent)
   while true {
     let cfd = accept(fd, nil, nil)
-    if cfd < 0 { continue }
+    if cfd < 0 {
+      // Bare `continue` spun at 100% CPU forever once the process ran out of descriptors:
+      // accept() fails immediately with EMFILE/ENFILE every iteration, so the loop never
+      // blocks again. Back off instead, and let the transient cases retry at once.
+      if errno == EMFILE || errno == ENFILE || errno == ENOMEM {
+        log("accept: out of file descriptors — backing off 250ms")
+        usleep(250_000)
+      } else if errno != EINTR && errno != ECONNABORTED {
+        usleep(20_000)
+      }
+      continue
+    }
+    // A client that connects and then says nothing used to pin a worker thread on a blocking
+    // read() forever; enough of those exhaust libdispatch's thread pool and the daemon stops
+    // answering anything. A receive deadline bounds it — every real client writes its request
+    // immediately after connecting.
+    var tv = timeval(tv_sec: 15, tv_usec: 0)
+    setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     workers.async { handleConnection(cfd); close(cfd) }
   }
 }
