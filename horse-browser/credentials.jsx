@@ -221,6 +221,7 @@ function BrokerStatus({ status }) {
     ['bitwarden cli', pend('checked after install')],
     ['session token', pend('after connect — hb-broker setup')],
     ['vault session', pend('after connect')],
+    ['last sync', pend('after the first sync')],
   ] : [
     daemonRow,
     ['bitwarden cli', bwState === 'no-cli' ? dot('red', 'not installed') : bwState === 'unauthenticated' ? dot('amber', 'not logged in') : bwState === 'unknown' ? dot('zinc', 'unknown') : dot('lime', bwState)],
@@ -228,6 +229,14 @@ function BrokerStatus({ status }) {
     ...(v.server ? [['server', <span className="font-mono text-[12px] text-zinc-200">{(v.server || '').replace(/^https?:\/\//, '')}</span>]] : []),
     ['session token', v.hasSession ? dot('lime', 'in the login Keychain') : dot('red', 'not connected')],
     ['vault session', v.warm ? dot('lime', 'warm') : v.hasSession ? dot('zinc', 'cold (unlocks on demand)') : dot('red', 'none — connect first')],
+    /* Freshness is the conclusion of the ladder above: with all of it connected, this is how
+       recently the broker actually pulled from Bitwarden. It reports a REAL server pull, not the
+       index rebuild — a rebuild on an unchanged local snapshot proves nothing about freshness. */
+    ['last sync', status.lastPullAt
+      ? <span title={'Last pull from Bitwarden. Automatic at most once an hour while the vault is warm, plus when you open this board; "Sync now" on the accounts page pulls immediately.'}>
+          {agoText(status.lastPullAt)}
+        </span>
+      : <span className="text-zinc-500" title="Nothing has been pulled from Bitwarden since the daemon started. It syncs when you open the board or hit Sync now.">not since the daemon started</span>],
   ]
   return (
     <div className="grid gap-y-1">
